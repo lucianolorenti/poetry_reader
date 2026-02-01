@@ -11,7 +11,7 @@ from typing import Optional
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import textwrap
 import numpy as np
-from .background_generator import create_gradient_background
+from .background_generator import create_gradient_background, create_zoomed_background
 from .particle_generator import make_particle_clip
 
 
@@ -48,27 +48,58 @@ def _measure_text(draw_obj, s, fnt):
 def render_text_image(
     text: str,
     resolution: tuple,
-    font_size: int = 60,
+    font_size: int = 70,
     color: tuple = (255, 255, 255),
     bg_color: Optional[str] = None,
     padding: int = 80,
     valign: str = "center",
-    bottom_margin: int = 140,
+    bottom_margin: int = 180,
     shadow: bool = True,
     elegant: bool = True,
     youtube: bool = False,
+    tiktok: bool = True,
+    stroke_width: Optional[int] = None,
 ) -> np.ndarray:
     """Render text for video overlays.
 
     When `youtube=True` the function prefers bold, highly legible sans-serif
     fonts and draws a dark stroke around the text for good readability on
     YouTube thumbnails and videos.
+
+    When `tiktok=True` optimizes for mobile viewing with larger fonts,
+    stronger stroke, and modern bold fonts.
     """
     width, height = resolution
 
     # Select font list depending on style preference
     font = None
-    if youtube:
+
+    # TikTok optimized fonts - modern, bold, mobile-friendly
+    if tiktok:
+        tiktok_fonts = [
+            "Montserrat-Bold.ttf",
+            "Montserrat-ExtraBold.ttf",
+            "Poppins-Bold.ttf",
+            "Poppins-ExtraBold.ttf",
+            "Roboto-Bold.ttf",
+            "Roboto-Black.ttf",
+            "Inter-Bold.ttf",
+            "Inter-ExtraBold.ttf",
+            "Nunito-Bold.ttf",
+            "Nunito-ExtraBold.ttf",
+            "Oswald-Bold.ttf",
+            "BebasNeue-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        ]
+        for f in tiktok_fonts:
+            try:
+                font = ImageFont.truetype(f, font_size)
+                break
+            except Exception:
+                continue
+
+    if font is None and youtube:
         # Try some common bold sans-serif fonts suitable for YouTube
         youtube_fonts = [
             "Montserrat-Bold.ttf",
@@ -153,19 +184,32 @@ def render_text_image(
     else:  # top
         y = padding
 
-    # Stroke/outline for YouTube readability
-    stroke_width = max(1, int(font_size * 0.06)) if youtube else 0
+    # Stroke/outline for YouTube or TikTok readability
+    if stroke_width is None:
+        if tiktok:
+            stroke_width = max(2, int(font_size * 0.08))  # Stronger stroke for TikTok
+        elif youtube:
+            stroke_width = max(1, int(font_size * 0.06))
+        else:
+            stroke_width = 0
     stroke_fill = (0, 0, 0)
 
     for line in lines:
         w, h = _measure_text(draw, line, font)
         x = (width - w) // 2
 
-        # Draw shadow (subtle) if requested
-        if shadow and not youtube:
-            shadow_color = (0, 0, 0, 180) if bg_color is None else (0, 0, 0)
-            for dx, dy in [(2, 2), (1, 1)]:
-                draw.text((x + dx, y + dy), line, font=font, fill=shadow_color)
+        # Draw shadow/glow effect
+        if shadow:
+            if tiktok:
+                # Multi-layer shadow for depth on TikTok
+                for offset in range(4, 0, -1):
+                    alpha = int(100 - offset * 20)
+                    shadow_color = (0, 0, 0, alpha) if bg_color is None else (0, 0, 0)
+                    draw.text((x + offset, y + offset), line, font=font, fill=shadow_color)
+            elif not youtube:
+                shadow_color = (0, 0, 0, 180) if bg_color is None else (0, 0, 0)
+                for dx, dy in [(2, 2), (1, 1)]:
+                    draw.text((x + dx, y + dy), line, font=font, fill=shadow_color)
 
         # Draw main text with optional stroke
         try:
@@ -243,32 +287,40 @@ def create_video_with_subtitles(
     subtitles: list,
     out_path: str,
     image_path: Optional[str] = None,
-    fps: int = 24,
-    resolution=(1280, 720),
-    fontsize: int = 60,
+    fps: int = 30,
+    resolution=(1080, 1920),  # TikTok vertical format by default
+    fontsize: int = 80,  # Larger for TikTok
     text_color: tuple = (255, 255, 255),
-    bottom_margin: int = 140,
+    bottom_margin: int = 200,  # More space for TikTok
     gradient_palette: Optional[str] = None,
     add_particles: bool = True,
-    num_particles: int = 40,
+    num_particles: int = 60,  # More particles for visual impact
     fade_duration: float = 0.5,
+    tiktok_mode: bool = True,
+    text_animation: str = "fade",  # Options: fade, typewriter, bounce, scale
+    zoom_background: bool = True,  # Add subtle zoom to background
+    add_sparkles: bool = True,  # Add sparkle effects
 ):
-    """Create a beautiful poetry video with gradient backgrounds, elegant text, and particles.
+    """Create a beautiful poetry video optimized for TikTok.
 
     Args:
         audio_path: Path to audio file
         subtitles: List of dicts [{"text": str, "start": float, "duration": float}, ...]
         out_path: Output video path
         image_path: Optional background image (if None, uses gradient)
-        fps: Frames per second
-        resolution: Video resolution (width, height)
-        fontsize: Font size for text
+        fps: Frames per second (default 30 for smooth TikTok)
+        resolution: Video resolution (default 1080x1920 for TikTok vertical)
+        fontsize: Font size for text (default 80 for mobile readability)
         text_color: Text color as RGB tuple (default white)
         bottom_margin: Margin from bottom for text
         gradient_palette: Palette name for gradient ("sunset", "ocean", etc.) or None for random
         add_particles: Add floating particle overlay
         num_particles: Number of particles in overlay
         fade_duration: Duration of fade in/out effects in seconds
+        tiktok_mode: Enable TikTok optimizations (fonts, stroke, effects)
+        text_animation: Animation style for text (fade, typewriter, bounce, scale)
+        zoom_background: Add subtle zoom/pan to background
+        add_sparkles: Add sparkle/light effects
     """
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
@@ -277,17 +329,70 @@ def create_video_with_subtitles(
 
     # Create beautiful gradient background or use provided image
     if image_path and os.path.exists(image_path):
-        bg = ImageClip(image_path).with_duration(duration)
-        bg = bg.resize(newsize=resolution)
+        if zoom_background:
+            # Create zoom/pan effect for image background (Ken Burns style)
+            img = Image.open(image_path)
+            zoom_factor = 1.15
+            big_width = int(resolution[0] * zoom_factor)
+            big_height = int(resolution[1] * zoom_factor)
+            img_resized = img.resize((big_width, big_height), Image.Resampling.LANCZOS)
+
+            def make_frame(t):
+                # Slowly pan upward over the duration
+                progress = t / duration
+                # Start at bottom, move to top
+                y_offset = int((big_height - resolution[1]) * (1 - progress))
+                x_offset = (big_width - resolution[0]) // 2  # Center horizontally
+                cropped = img_resized.crop((
+                    x_offset,
+                    y_offset,
+                    x_offset + resolution[0],
+                    y_offset + resolution[1]
+                ))
+                return np.array(cropped)
+
+            bg = VideoClip(make_frame, duration=duration)
+        else:
+            bg = ImageClip(image_path).with_duration(duration)
+            bg = bg.resize(newsize=resolution)
     else:
-        # Generate beautiful gradient background
-        gradient_img = create_gradient_background(
-            resolution=resolution,
-            palette_name=gradient_palette,
-            direction="diagonal",
-            noise=True,
-        )
-        bg = ImageClip(gradient_img).with_duration(duration)
+        if zoom_background:
+            # Create zoomed gradient background with pan effect (Ken Burns style)
+            zoom_factor = 1.15
+            big_img = create_zoomed_background(
+                resolution=resolution,
+                palette_name=gradient_palette,
+                zoom_factor=zoom_factor,
+                pan_direction="up",
+            )
+
+            def make_frame(t):
+                # Slowly pan upward over the duration
+                progress = t / duration
+                width, height = resolution
+                big_width = int(width * zoom_factor)
+                big_height = int(height * zoom_factor)
+                # Start at bottom, move to top
+                y_offset = int((big_height - height) * (1 - progress))
+                x_offset = (big_width - width) // 2  # Center horizontally
+                cropped = big_img.crop((
+                    x_offset,
+                    y_offset,
+                    x_offset + width,
+                    y_offset + height
+                ))
+                return np.array(cropped)
+
+            bg = VideoClip(make_frame, duration=duration)
+        else:
+            # Generate beautiful gradient background
+            gradient_img = create_gradient_background(
+                resolution=resolution,
+                palette_name=gradient_palette,
+                direction="diagonal",
+                noise=True,
+            )
+            bg = ImageClip(gradient_img).with_duration(duration)
 
     # Create particle overlay
     clips_to_composite = [bg]
@@ -298,6 +403,7 @@ def create_video_with_subtitles(
             resolution=resolution,
             fps=fps,
             num_particles=num_particles,
+            add_sparkles=add_sparkles,
         )
         clips_to_composite.append(particle_clip)
 
@@ -310,7 +416,7 @@ def create_video_with_subtitles(
         if not text or dur <= 0:
             continue
 
-        # Render elegant text with shadows (once)
+        # Render text optimized for TikTok
         img_arr = render_text_image(
             text,
             resolution=resolution,
@@ -321,7 +427,8 @@ def create_video_with_subtitles(
             bottom_margin=bottom_margin,
             shadow=True,
             elegant=False,
-            youtube=True,
+            youtube=False,
+            tiktok=tiktok_mode,
         )
 
         # Create a VideoClip with fade effect using opacity animation

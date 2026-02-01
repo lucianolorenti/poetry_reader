@@ -188,15 +188,21 @@ def main(
     image_path: Optional[str] = None,
     gradient_palette: Optional[str] = None,
     add_particles: bool = True,
-    font_size: int = 60,
+    font_size: int = 80,
     fade_duration: float = 0.5,
     force_lang: Optional[str] = None,
-    fps: int = 24,
-    num_particles: int = 40,
-    tts_backend: str = "coqui",
+    fps: int = 30,
+    num_particles: int = 80,
+    tts_backend: str = "melo",
     tts_model: Optional[str] = None,
+    resolution: tuple = (1080, 1920),
+    tiktok_mode: bool = True,
+    zoom_background: bool = True,
 ):
     """Main video generation pipeline reading `.md` files from `input_dir`.
+
+    Optimized for TikTok with vertical 9:16 format, high-quality TTS,
+    and professional visual effects.
 
     Each `.md` must have a title and author in the first lines as:
     Titulo: My Title
@@ -285,7 +291,7 @@ def main(
                 c.close()
             final_audio.close()
 
-            # Crear video con subtitles
+            # Crear video con subtitles (optimizado para TikTok)
             video_path = os.path.join(out_dir, base_name + ".mp4")
             create_video_with_subtitles(
                 audio_path=final_audio_path,
@@ -293,11 +299,15 @@ def main(
                 out_path=video_path,
                 image_path=image_path,
                 fps=fps,
+                resolution=resolution,
                 fontsize=font_size,
                 gradient_palette=gradient_palette,
                 add_particles=add_particles,
                 num_particles=num_particles,
                 fade_duration=fade_duration,
+                tiktok_mode=tiktok_mode,
+                zoom_background=zoom_background,
+                add_sparkles=True,
             )
 
             # limpiar fragmentos intermedios

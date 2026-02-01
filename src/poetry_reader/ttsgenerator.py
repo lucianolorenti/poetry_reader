@@ -6,14 +6,13 @@ from TTS.api import TTS
 
 LOGGER = logging.getLogger(__name__)
 
-# Map languages to Coqui TTS model names. These are suggestions — adjust if you
-# prefer different models or voices. If a model fails to load we fall back to
-# the default English model.
+# Map languages to Coqui TTS model names. Using VITS models for better quality.
+# VITS provides more natural sounding voices compared to Tacotron2.
 MODEL_BY_LANG = {
-    "es": "tts_models/es/mai/tacotron2-DDC",
-    "en": "tts_models/en/ljspeech/tacotron2-DDC",
+    "es": "tts_models/es/css10/vits",  # Better Spanish VITS model
+    "en": "tts_models/en/ljspeech/vits",  # Better English VITS model
 }
-DEFAULT_MODEL = "tts_models/en/ljspeech/tacotron2-DDC"
+DEFAULT_MODEL = "tts_models/en/ljspeech/vits"
 
 
 class CoquiTTS:
@@ -148,17 +147,111 @@ class ChatterboxTTS:
         ta.save(out_path, tensor, int(self.sr))
 
 
+class MeloTTSWrapper:
+    """Wrapper for MeloTTS - high quality multilingual TTS, excellent for Spanish.
+
+    MeloTTS provides very natural sounding voices and supports Spanish with
+    high quality. It runs in real-time on CPU.
+
+    Installation: pip install melotts
+    """
+
+    def __init__(self, lang: str = "ES", device: str = "auto"):
+        """Initialize MeloTTS.
+
+        Args:
+            lang: Language code (ES for Spanish, EN for English, etc.)
+            device: Device to use ('auto', 'cpu', 'cuda')
+        """
+        self.lang = lang.upper()
+        self.device = device
+        self.model = None
+        self.sr = 44100
+
+        try:
+            from melo.api import TTS as MeloTTS
+
+            LOGGER.info(f"Loading MeloTTS model for language: {self.lang}")
+            self.model = MeloTTS(language=self.lang, device=device)
+            LOGGER.info("MeloTTS loaded successfully")
+        except ImportError:
+            LOGGER.error("MeloTTS not installed. Run: pip install melotts")
+            raise
+        except Exception as exc:
+            LOGGER.exception("Failed to load MeloTTS: %s", exc)
+            raise
+
+    def synthesize_to_file(
+        self,
+        text: str,
+        out_path: str,
+        speaker_id: int = 0,
+        speed: float = 1.0,
+    ):
+        """Generate audio for text and save to file.
+
+        Args:
+            text: Text to synthesize
+            out_path: Output audio file path
+            speaker_id: Speaker ID (0 is default, varies by language)
+            speed: Speaking speed (1.0 is normal)
+        """
+        import torchaudio as ta
+        import torch
+        import numpy as np
+
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+        try:
+            # Generate audio
+            wav = self.model.synthesize(
+                text,
+                speaker_id=speaker_id,
+                speed=speed,
+            )
+
+            # Convert to tensor and save
+            if isinstance(wav, np.ndarray):
+                tensor = torch.from_numpy(wav)
+            elif isinstance(wav, torch.Tensor):
+                tensor = wav
+            else:
+                tensor = torch.tensor(wav)
+
+            # Ensure shape is [channels, time]
+            if tensor.ndim == 1:
+                tensor = tensor.unsqueeze(0)
+            elif tensor.ndim == 2 and tensor.shape[0] > tensor.shape[1]:
+                tensor = tensor.T
+
+            ta.save(out_path, tensor, self.sr)
+            LOGGER.info(f"Audio saved to {out_path}")
+
+        except Exception as exc:
+            LOGGER.exception("Failed to synthesize with MeloTTS: %s", exc)
+            raise
+
+
 def get_tts(
-    backend: str = "coqui", lang: Optional[str] = None, model_name: Optional[str] = None
+    backend: str = "melo", lang: Optional[str] = None, model_name: Optional[str] = None
 ):
     """Factory: return a TTS object with `synthesize_to_file(text, out_path)`.
 
-    `backend` can be 'coqui' or 'chatterbox'.
+    Backends:
+    - 'melo': MeloTTS (recommended for Spanish, high quality, free)
+    - 'coqui': Coqui TTS (open source, good quality)
+    - 'chatterbox': Chatterbox TTS (multilingual)
     """
-    b = (backend or "coqui").lower()
-    if b == "coqui":
-        return CoquiTTS(model_name=model_name, lang=lang)
+    b = (backend or "melo").lower()
+    lang_code = (lang or "es").lower()
+
+    if b == "melo":
+        # MeloTTS uses 2-letter codes
+        melo_lang = "ES" if lang_code.startswith("es") else "EN"
+        return MeloTTSWrapper(lang=melo_lang)
+    elif b == "coqui":
+        return CoquiTTS(model_name=model_name, lang=lang_code)
     elif b == "chatterbox":
-        return ChatterboxTTS(lang=lang, model_name=model_name)
+        return ChatterboxTTS(lang=lang_code, model_name=model_name)
     else:
         raise ValueError("Unknown TTS backend: %s" % backend)

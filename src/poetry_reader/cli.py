@@ -20,7 +20,7 @@ def generate(
     no_particles: bool = typer.Option(
         False, "--no-particles", help="Desactivar overlay de partículas flotantes"
     ),
-    font_size: int = typer.Option(60, help="Tamaño de fuente para el texto en puntos"),
+    font_size: int = typer.Option(80, help="Tamaño de fuente para el texto en puntos"),
     fade_duration: float = typer.Option(
         0.5, help="Duración del efecto fade in/out en segundos"
     ),
@@ -28,16 +28,25 @@ def generate(
         None,
         help="Forzar idioma para TTS (es=español, en=inglés). Si no se especifica, se detecta automáticamente",
     ),
-    fps: int = typer.Option(24, help="Frames por segundo del video"),
+    fps: int = typer.Option(30, help="Frames por segundo del video (30 recomendado para TikTok)"),
     num_particles: int = typer.Option(
-        40, help="Número de partículas en el overlay (si está activado)"
+        80, help="Número de partículas en el overlay (si está activado)"
     ),
-    tts: str = typer.Option("coqui", help="Backend TTS a usar: 'coqui' o 'chatterbox'"),
+    tts: str = typer.Option("melo", help="Backend TTS: 'melo' (recomendado español), 'coqui', o 'chatterbox'"),
     tts_model: Optional[str] = typer.Option(
         None, help="Modelo específico para el backend TTS (opcional)"
     ),
+    vertical: bool = typer.Option(
+        True, "--vertical/--horizontal", help="Formato vertical 9:16 para TikTok (por defecto)"
+    ),
+    no_zoom: bool = typer.Option(
+        False, "--no-zoom", help="Desactivar efecto de zoom en el fondo"
+    ),
 ):
-    """Genera audios y videos desde un archivo Excel"""
+    """Genera audios y videos desde un archivo Excel, optimizado para TikTok"""
+    # TikTok vertical resolution (9:16)
+    resolution = (1080, 1920) if vertical else (1280, 720)
+
     generate_main(
         input_dir=str(input_dir),
         out_dir=str(out),
@@ -51,6 +60,9 @@ def generate(
         num_particles=num_particles,
         tts_backend=tts,
         tts_model=tts_model,
+        resolution=resolution,
+        tiktok_mode=True,
+        zoom_background=not no_zoom,
     )
 
 
