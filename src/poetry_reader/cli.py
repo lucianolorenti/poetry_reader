@@ -2,7 +2,8 @@ import typer
 from pathlib import Path
 from typing import Optional
 from .generate_videos import main as generate_main
-import os 
+import os
+
 app = typer.Typer(help="Poetry Reader CLI")
 
 
@@ -28,16 +29,23 @@ def generate(
         None,
         help="Forzar idioma para TTS (es=español, en=inglés). Si no se especifica, se detecta automáticamente",
     ),
-    fps: int = typer.Option(30, help="Frames por segundo del video (30 recomendado para TikTok)"),
+    fps: int = typer.Option(
+        30, help="Frames por segundo del video (30 recomendado para TikTok)"
+    ),
     num_particles: int = typer.Option(
         80, help="Número de partículas en el overlay (si está activado)"
     ),
-    tts: str = typer.Option("melo", help="Backend TTS: 'melo' (recomendado español), 'coqui', o 'chatterbox'"),
+    tts: str = typer.Option(
+        "kokoro",
+        help="Backend TTS: 'kokoro' (default, rápido y ligero), 'melo' (español), 'coqui', o 'chatterbox'",
+    ),
     tts_model: Optional[str] = typer.Option(
         None, help="Modelo específico para el backend TTS (opcional)"
     ),
     vertical: bool = typer.Option(
-        True, "--vertical/--horizontal", help="Formato vertical 9:16 para TikTok (por defecto)"
+        True,
+        "--vertical/--horizontal",
+        help="Formato vertical 9:16 para TikTok (por defecto)",
     ),
     no_zoom: bool = typer.Option(
         False, "--no-zoom", help="Desactivar efecto de zoom en el fondo"
@@ -69,26 +77,26 @@ def generate(
 @app.command("tts-generate")
 def tts_generate(
     text: str = typer.Option(..., help="Texto a sintetizar"),
-    engine: str = typer.Option("coqui", help="Engine TTS: 'coqui' o 'chatterbox'"),
+    engine: str = typer.Option(
+        "kokoro", help="Engine TTS: 'kokoro' (default), 'melo', 'coqui', o 'chatterbox'"
+    ),
     model: Optional[str] = typer.Option(None, help="Modelo específico (opcional)"),
     device: Optional[str] = typer.Option(
         None, help="Device para modelos, p.ej. 'cuda'"
+    ),
+    voice: Optional[str] = typer.Option(
+        None, help="Voz específica para Kokoro (ej: af_bella, ef_dora)"
     ),
     out: Path = typer.Option(Path("./out.wav"), help="Ruta de salida para el WAV"),
 ):
     """Genera un archivo WAV a partir de `text` usando el engine seleccionado."""
     from .ttsgenerator import get_tts
 
-    tts = get_tts(backend=engine, lang="es", model_name=model)
-
-    # Si el backend es Chatterbox y la clase acepta device/model podemos pasarla
-    # En la implementación actual `ChatterboxTTS` acepta backend_name y model_name
-    # y usa `from_pretrained(device=...)` internamente si está disponible.
+    tts = get_tts(backend=engine, lang="es", model_name=model, voice=voice)
 
     # Aseguramos que el directorio exista
     out = out.resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
-    
 
     # Synth to file
     tts.synthesize_to_file(text, str(out))

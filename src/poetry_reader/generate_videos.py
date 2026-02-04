@@ -193,8 +193,9 @@ def main(
     force_lang: Optional[str] = None,
     fps: int = 30,
     num_particles: int = 80,
-    tts_backend: str = "melo",
+    tts_backend: str = "kokoro",
     tts_model: Optional[str] = None,
+    tts_voice: Optional[str] = None,
     resolution: tuple = (1080, 1920),
     tiktok_mode: bool = True,
     zoom_background: bool = True,
@@ -246,10 +247,10 @@ def main(
         else:
             lang = detect_language(text)
 
-        tts_key = f"{tts_backend}:{lang}:{tts_model or ''}"
+        tts_key = f"{tts_backend}:{lang}:{tts_model or ''}:{tts_voice or ''}"
         if tts_key not in tts_cache:
             tts_cache[tts_key] = get_tts(
-                backend=tts_backend, lang=lang, model_name=tts_model
+                backend=tts_backend, lang=lang, model_name=tts_model, voice=tts_voice
             )
         tts = tts_cache[tts_key]
 
@@ -272,7 +273,7 @@ def main(
                 continue
 
             # Normalize text for TTS (remove accents) but keep original for display
-            #tts_text = normalize_text_for_tts(line)
+            # tts_text = normalize_text_for_tts(line)
             tts.synthesize_to_file(line, frag_path)
             clip = AudioFileClip(frag_path)
             dur = clip.duration

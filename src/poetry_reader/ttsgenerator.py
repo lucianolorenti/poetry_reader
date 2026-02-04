@@ -1,21 +1,25 @@
 import os
 import logging
 from typing import Optional
-from TTS.api import TTS
 
 
 LOGGER = logging.getLogger(__name__)
 
-# Map languages to Coqui TTS model names. Using VITS models for better quality.
-# VITS provides more natural sounding voices compared to Tacotron2.
-MODEL_BY_LANG = {
-    "es": "tts_models/es/css10/vits",  # Better Spanish VITS model
-    "en": "tts_models/en/ljspeech/vits",  # Better English VITS model
-}
-DEFAULT_MODEL = "tts_models/en/ljspeech/vits"
-
 
 class CoquiTTS:
+    """Coqui TTS wrapper (optional dependency).
+
+    Install with: pip install TTS
+    """
+
+    # Map languages to Coqui TTS model names. Using VITS models for better quality.
+    # VITS provides more natural sounding voices compared to Tacotron2.
+    MODEL_BY_LANG = {
+        "es": "tts_models/es/css10/vits",  # Better Spanish VITS model
+        "en": "tts_models/en/ljspeech/vits",  # Better English VITS model
+    }
+    DEFAULT_MODEL = "tts_models/en/ljspeech/vits"
+
     def __init__(self, model_name: Optional[str] = None, lang: Optional[str] = None):
         """Create a Coqui TTS wrapper.
 
@@ -23,11 +27,13 @@ class CoquiTTS:
         and the class will select a model from `MODEL_BY_LANG`. If model loading
         fails the code will fall back to `DEFAULT_MODEL`.
         """
+        from TTS.api import TTS
+
         if model_name is None:
-            if lang and lang in MODEL_BY_LANG:
-                model_name = MODEL_BY_LANG[lang]
+            if lang and lang in self.MODEL_BY_LANG:
+                model_name = self.MODEL_BY_LANG[lang]
             else:
-                model_name = DEFAULT_MODEL
+                model_name = self.DEFAULT_MODEL
 
         self.model_name = model_name
         self.tts = None
@@ -36,11 +42,11 @@ class CoquiTTS:
             self.tts = TTS(model_name)
         except Exception as exc:  # pragma: no cover - runtime fallback
             LOGGER.exception("Failed to load TTS model %s: %s", model_name, exc)
-            if model_name != DEFAULT_MODEL:
+            if model_name != self.DEFAULT_MODEL:
                 try:
-                    LOGGER.info("Falling back to default model: %s", DEFAULT_MODEL)
-                    self.tts = TTS(DEFAULT_MODEL)
-                    self.model_name = DEFAULT_MODEL
+                    LOGGER.info("Falling back to default model: %s", self.DEFAULT_MODEL)
+                    self.tts = TTS(self.DEFAULT_MODEL)
+                    self.model_name = self.DEFAULT_MODEL
                 except Exception:
                     LOGGER.exception("Failed to load default TTS model")
                     raise
@@ -232,20 +238,154 @@ class MeloTTSWrapper:
             raise
 
 
+class KokoroTTSWrapper:
+    """Wrapper for Kokoro TTS - lightweight, fast, high-quality TTS.
+
+    Kokoro is an efficient TTS model that runs locally with high quality voices.
+    Supports multiple languages and voices.
+
+    Installation: pip install kokoro
+    """
+
+    # Voice mappings for different languages
+    VOICES_BY_LANG = {
+        "es": "ef_dora",  # Spanish voice (using English voices as fallback)
+        "en": "af_bella",  # Default English voice
+    }
+    DEFAULT_VOICE = "af_bella"
+
+    def __init__(
+        self, lang: str = "es", voice: Optional[str] = None, device: str = "cpu"
+    ):
+        """Initialize Kokoro TTS.
+
+        Args:
+            lang: Language code (es, en, etc.)
+            voice: Specific voice to use (overrides lang selection)
+            device: Device to use ('cpu', 'cuda', etc.)
+        """
+        self.lang = lang.lower()
+        self.device = device
+        self.model = None
+        self.pipeline = None
+        self.sr = 24000  # Kokoro uses 24kHz sample rate
+
+        # Select voice based on language if not explicitly provided
+        if voice is None:
+            voice = self.VOICES_BY_LANG.get(self.lang, self.DEFAULT_VOICE)
+        self.voice = voice
+
+        try:
+            LOGGER.info(f"Loading Kokoro TTS with voice: {self.voice}")
+
+            # Try different import patterns
+            try:
+                from kokoro import KPipeline
+
+                self.pipeline = KPipeline(lang_code=self.lang[:2].lower())
+                LOGGER.info("Kokoro KPipeline loaded successfully")
+            except ImportError:
+                # Fallback to alternative API
+                try:
+                    import kokoro
+
+                    self.model = kokoro.KokoroTTS()
+                    LOGGER.info("KokoroTTS loaded successfully")
+                except ImportError:
+                    LOGGER.error("Kokoro not installed. Run: pip install kokoro")
+                    raise
+
+        except Exception as exc:
+            LOGGER.exception("Failed to load Kokoro TTS: %s", exc)
+            raise
+
+    def synthesize_to_file(
+        self,
+        text: str,
+        out_path: str,
+        speed: float = 1.0,
+    ):
+        """Generate audio for text and save to file.
+
+        Args:
+            text: Text to synthesize
+            out_path: Output audio file path
+            speed: Speaking speed (1.0 is normal)
+        """
+        import soundfile as sf
+        import numpy as np
+
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+        try:
+            if self.pipeline is not None:
+                # Use KPipeline API
+                generator = self.pipeline(text, voice=self.voice, speed=speed)
+                # Collect all audio chunks
+                audio_chunks = []
+                for _, _, audio in generator:
+                    if isinstance(audio, np.ndarray):
+                        audio_chunks.append(audio)
+                    else:
+                        # Convert tensor to numpy
+                        audio_chunks.append(
+                            audio.numpy()
+                            if hasattr(audio, "numpy")
+                            else np.array(audio)
+                        )
+
+                if audio_chunks:
+                    # Concatenate all chunks
+                    full_audio = np.concatenate(audio_chunks, axis=0)
+                    # Ensure shape is [samples] or [channels, samples]
+                    if (
+                        full_audio.ndim == 2
+                        and full_audio.shape[0] > full_audio.shape[1]
+                    ):
+                        full_audio = full_audio.T
+
+                    sf.write(out_path, full_audio, self.sr)
+                else:
+                    raise RuntimeError("No audio generated")
+            elif self.model is not None:
+                # Use alternative KokoroTTS API
+                audio = self.model.tts(text, voice=self.voice, speed=speed)
+                if not isinstance(audio, np.ndarray):
+                    audio = (
+                        audio.numpy() if hasattr(audio, "numpy") else np.array(audio)
+                    )
+
+                sf.write(out_path, audio, self.sr)
+            else:
+                raise RuntimeError("Kokoro model not initialized")
+
+            LOGGER.info(f"Audio saved to {out_path}")
+
+        except Exception as exc:
+            LOGGER.exception("Failed to synthesize with Kokoro TTS: %s", exc)
+            raise
+
+
 def get_tts(
-    backend: str = "melo", lang: Optional[str] = None, model_name: Optional[str] = None
+    backend: str = "kokoro",
+    lang: Optional[str] = None,
+    model_name: Optional[str] = None,
+    voice: Optional[str] = None,
 ):
     """Factory: return a TTS object with `synthesize_to_file(text, out_path)`.
 
     Backends:
+    - 'kokoro': Kokoro TTS (default - fast, lightweight, high quality)
     - 'melo': MeloTTS (recommended for Spanish, high quality, free)
     - 'coqui': Coqui TTS (open source, good quality)
     - 'chatterbox': Chatterbox TTS (multilingual)
     """
-    b = (backend or "melo").lower()
+    b = (backend or "kokoro").lower()
     lang_code = (lang or "es").lower()
 
-    if b == "melo":
+    if b == "kokoro":
+        return KokoroTTSWrapper(lang=lang_code, voice=voice)
+    elif b == "melo":
         # MeloTTS uses 2-letter codes
         melo_lang = "ES" if lang_code.startswith("es") else "EN"
         return MeloTTSWrapper(lang=melo_lang)
