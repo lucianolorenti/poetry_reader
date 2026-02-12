@@ -35,12 +35,13 @@ def generate(
     num_particles: int = typer.Option(
         80, help="Número de partículas en el overlay (si está activado)"
     ),
-    tts: str = typer.Option(
-        "kokoro",
-        help="Backend TTS: 'kokoro' (default, rápido y ligero), 'melo' (español), 'coqui', o 'chatterbox'",
+    tts_instruct: Optional[str] = typer.Option(
+        None,
+        help="Instrucción de voz para Qwen3-TTS VoiceDesign (descripción de la voz deseada)",
     ),
     tts_model: Optional[str] = typer.Option(
-        None, help="Modelo específico para el backend TTS (opcional)"
+        "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+        help="Modelo Qwen3-TTS (default: Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign)",
     ),
     vertical: bool = typer.Option(
         True,
@@ -51,7 +52,7 @@ def generate(
         False, "--no-zoom", help="Desactivar efecto de zoom en el fondo"
     ),
 ):
-    """Genera audios y videos desde un archivo Excel, optimizado para TikTok"""
+    """Genera audios y videos desde archivos markdown, optimizado para TikTok"""
     # TikTok vertical resolution (9:16)
     resolution = (1080, 1920) if vertical else (1280, 720)
 
@@ -66,8 +67,9 @@ def generate(
         force_lang=lang,
         fps=fps,
         num_particles=num_particles,
-        tts_backend=tts,
+        tts_backend="qwen3",
         tts_model=tts_model,
+        tts_instruct=tts_instruct,
         resolution=resolution,
         tiktok_mode=True,
         zoom_background=not no_zoom,
@@ -77,22 +79,29 @@ def generate(
 @app.command("tts-generate")
 def tts_generate(
     text: str = typer.Option(..., help="Texto a sintetizar"),
-    engine: str = typer.Option(
-        "kokoro", help="Engine TTS: 'kokoro' (default), 'melo', 'coqui', o 'chatterbox'"
+    instruct: Optional[str] = typer.Option(
+        None,
+        help="Instrucción/detalle de voz (ej: 'Voz grave y pausada de narrador de documentales')",
     ),
-    model: Optional[str] = typer.Option(None, help="Modelo específico (opcional)"),
+    model: Optional[str] = typer.Option(
+        "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+        help="Modelo Qwen3-TTS (default: Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign)",
+    ),
     device: Optional[str] = typer.Option(
-        None, help="Device para modelos, p.ej. 'cuda'"
+        "auto", help="Device para el modelo ('auto', 'cpu', 'cuda')"
     ),
-    voice: Optional[str] = typer.Option(
-        None, help="Voz específica para Kokoro (ej: af_bella, ef_dora)"
-    ),
+    lang: Optional[str] = typer.Option("es", help="Idioma (es=español, en=inglés)"),
     out: Path = typer.Option(Path("./out.wav"), help="Ruta de salida para el WAV"),
 ):
-    """Genera un archivo WAV a partir de `text` usando el engine seleccionado."""
-    from .ttsgenerator import get_tts
+    """Genera un archivo WAV a partir de `text` usando Qwen3-TTS VoiceDesign."""
+    from .ttsgenerator import Qwen3TTSWrapper
 
-    tts = get_tts(backend=engine, lang="es", model_name=model, voice=voice)
+    tts = Qwen3TTSWrapper(
+        lang=lang or "es",
+        device=device or "auto",
+        model_name=model or "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+        default_instruct=instruct,
+    )
 
     # Aseguramos que el directorio exista
     out = out.resolve()

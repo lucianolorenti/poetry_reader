@@ -193,9 +193,9 @@ def main(
     force_lang: Optional[str] = None,
     fps: int = 30,
     num_particles: int = 80,
-    tts_backend: str = "kokoro",
+    tts_backend: str = "qwen3",
     tts_model: Optional[str] = None,
-    tts_voice: Optional[str] = None,
+    tts_instruct: Optional[str] = None,
     resolution: tuple = (1080, 1920),
     tiktok_mode: bool = True,
     zoom_background: bool = True,
@@ -247,10 +247,13 @@ def main(
         else:
             lang = detect_language(text)
 
-        tts_key = f"{tts_backend}:{lang}:{tts_model or ''}:{tts_voice or ''}"
+        tts_key = f"{tts_backend}:{lang}:{tts_model or ''}:{tts_instruct or ''}"
         if tts_key not in tts_cache:
             tts_cache[tts_key] = get_tts(
-                backend=tts_backend, lang=lang, model_name=tts_model, voice=tts_voice
+                backend=tts_backend,
+                lang=lang,
+                model_name=tts_model,
+                instruct=tts_instruct,
             )
         tts = tts_cache[tts_key]
 
