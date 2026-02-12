@@ -13,6 +13,9 @@ from .ttsgenerator import get_tts
 from langdetect import detect
 
 
+SUPPORTED_TTS_BACKENDS = {"kokoro", "melo", "coqui", "chatterbox"}
+
+
 def detect_language(text: str) -> str:
     """Detect language code for `text`. Prefers `langdetect` if available,
     otherwise uses a simple heuristic checking for accented characters.
@@ -213,6 +216,20 @@ def main(
     """
     os.makedirs(out_dir, exist_ok=True)
 
+    selected_backend = (tts_backend or "kokoro").lower()
+    selected_model = tts_model
+
+    if selected_backend == "kokoro" and tts_model:
+        candidate_backend = tts_model.strip().lower()
+        if candidate_backend in SUPPORTED_TTS_BACKENDS:
+            print(
+                "[poetry-reader] '--tts-model %s' coincide con un backend soportado. "
+                "Usa '--tts %s' para especificarlo directamente."
+                % (tts_model, candidate_backend)
+            )
+            selected_backend = candidate_backend
+            selected_model = None
+
     # Find all .md files in the input directory
     pattern = os.path.join(input_dir, "*.md")
     files = sorted(glob(pattern))
@@ -247,10 +264,13 @@ def main(
         else:
             lang = detect_language(text)
 
-        tts_key = f"{tts_backend}:{lang}:{tts_model or ''}:{tts_voice or ''}"
+        tts_key = f"{selected_backend}:{lang}:{selected_model or ''}:{tts_voice or ''}"
         if tts_key not in tts_cache:
             tts_cache[tts_key] = get_tts(
-                backend=tts_backend, lang=lang, model_name=tts_model, voice=tts_voice
+                backend=selected_backend,
+                lang=lang,
+                model_name=selected_model,
+                voice=tts_voice,
             )
         tts = tts_cache[tts_key]
 
@@ -264,7 +284,7 @@ def main(
             frag_path = os.path.join(audio_frag_dir, f"frag_{j + 1}.wav")
             if line.strip() == "":
                 # Write a short silence file to use as a pause
-                write_silence_wav(frag_path, duration=0.6)
+                write_silence_wav(frag_path, duration=0.15)
                 clip = AudioFileClip(frag_path)
                 dur = clip.duration
                 fragments.append(clip)
@@ -276,6 +296,9 @@ def main(
             # tts_text = normalize_text_for_tts(line)
             tts.synthesize_to_file(line, frag_path)
             clip = AudioFileClip(frag_path)
+            # Trim 0.1 seconds from the end to remove TTS natural pause
+            if clip.duration > 0.1:
+                clip = clip.subclipped(0, clip.duration - 0.1)
             dur = clip.duration
             fragments.append(clip)
             # Use original line for subtitles (preserve accents)
@@ -298,6 +321,8 @@ def main(
                 audio_path=final_audio_path,
                 subtitles=subtitles,
                 out_path=video_path,
+                title=title,
+                author=author,
                 image_path=image_path,
                 fps=fps,
                 resolution=resolution,

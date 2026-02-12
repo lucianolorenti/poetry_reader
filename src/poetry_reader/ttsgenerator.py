@@ -162,17 +162,29 @@ class MeloTTSWrapper:
     Installation: pip install melotts
     """
 
-    def __init__(self, lang: str = "ES", device: str = "auto"):
+    def __init__(
+        self, lang: str = "ES", voice: Optional[str] = None, device: str = "auto"
+    ):
         """Initialize MeloTTS.
 
         Args:
             lang: Language code (ES for Spanish, EN for English, etc.)
+            voice: Optional voice name or speaker ID
             device: Device to use ('auto', 'cpu', 'cuda')
         """
         self.lang = lang.upper()
         self.device = device
         self.model = None
         self.sr = 44100
+
+        # Determine speaker_id from voice
+        self.speaker_id = 0
+        if voice is not None:
+            try:
+                self.speaker_id = int(voice)
+            except (ValueError, TypeError):
+                # Default to 0 if voice is not a valid integer
+                self.speaker_id = 0
 
         try:
             from melo.api import TTS as MeloTTS
@@ -191,7 +203,7 @@ class MeloTTSWrapper:
         self,
         text: str,
         out_path: str,
-        speaker_id: int = 0,
+        speaker_id: Optional[int] = None,
         speed: float = 1.0,
     ):
         """Generate audio for text and save to file.
@@ -199,7 +211,7 @@ class MeloTTSWrapper:
         Args:
             text: Text to synthesize
             out_path: Output audio file path
-            speaker_id: Speaker ID (0 is default, varies by language)
+            speaker_id: Speaker ID (if None, uses self.speaker_id)
             speed: Speaking speed (1.0 is normal)
         """
         import torchaudio as ta
@@ -208,8 +220,22 @@ class MeloTTSWrapper:
 
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
+        # Use the speaker_id passed in, or the one from initialization if None or 0 (default)
+        if speaker_id is None or speaker_id == 0:
+            speaker_id = self.speaker_id
+
         try:
-            # Generate audio
+            if hasattr(self.model, "tts_to_file"):
+                self.model.tts_to_file(
+                    text,
+                    speaker_id=speaker_id,
+                    output_path=out_path,
+                    speed=speed,
+                )
+                LOGGER.info("Audio saved to %s", out_path)
+                return
+
+            # Generate audio (legacy API)
             wav = self.model.synthesize(
                 text,
                 speaker_id=speaker_id,
@@ -231,7 +257,7 @@ class MeloTTSWrapper:
                 tensor = tensor.T
 
             ta.save(out_path, tensor, self.sr)
-            LOGGER.info(f"Audio saved to {out_path}")
+            LOGGER.info("Audio saved to %s", out_path)
 
         except Exception as exc:
             LOGGER.exception("Failed to synthesize with MeloTTS: %s", exc)
@@ -247,10 +273,25 @@ class KokoroTTSWrapper:
     Installation: pip install kokoro
     """
 
-    # Voice mappings for different languages
+    # Voice mappings for different languages.
+    # For Spanish, native Kokoro voices include (per VOICES.md):
+    # - Male: 'em_alex', 'em_santa'
+    # - Female: 'ef_dora'
     VOICES_BY_LANG = {
-        "es": "ef_dora",  # Spanish voice (using English voices as fallback)
-        "en": "af_bella",  # Default English voice
+        "es": "em_alex",  # Native Spanish voice (male)
+        "en": "af_bella",  # American English (female)
+        "en-us": "af_bella",  # American English
+        "en-gb": "bf_alice",  # British English
+        "fr": "ff_siwis",  # French
+        "it": "if_sara",  # Italian
+    }
+    VOICE_ALIASES = {
+        # Legacy Spanish names used before Kokoro renamed voices
+        "es_alex": "em_alex",
+        "es_david": "em_santa",
+        "es_fernando": "em_santa",
+        "es_belen": "ef_dora",
+        "es_estela": "ef_dora",
     }
     DEFAULT_VOICE = "af_bella"
 
@@ -261,7 +302,8 @@ class KokoroTTSWrapper:
 
         Args:
             lang: Language code (es, en, etc.)
-            voice: Specific voice to use (overrides lang selection)
+            voice: Specific voice to use (overrides lang selection).
+                   Can be any valid Kokoro voice name (e.g., 'af_bella', 'em_alex').
             device: Device to use ('cpu', 'cuda', etc.)
         """
         self.lang = lang.lower()
@@ -270,10 +312,13 @@ class KokoroTTSWrapper:
         self.pipeline = None
         self.sr = 24000  # Kokoro uses 24kHz sample rate
 
-        # Select voice based on language if not explicitly provided
+        # Select voice based on language if not explicitly provided.
+        # This allows passing any voice name directly via the `voice` parameter.
         if voice is None:
-            voice = self.VOICES_BY_LANG.get(self.lang, self.DEFAULT_VOICE)
-        self.voice = voice
+            voice = self.VOICES_BY_LANG.get(
+                self.lang, self.VOICES_BY_LANG.get(self.lang[:2], self.DEFAULT_VOICE)
+            )
+        self.voice = self.VOICE_ALIASES.get(voice, voice)
 
         try:
             LOGGER.info(f"Loading Kokoro TTS with voice: {self.voice}")
@@ -282,8 +327,33 @@ class KokoroTTSWrapper:
             try:
                 from kokoro import KPipeline
 
-                self.pipeline = KPipeline(lang_code=self.lang[:2].lower())
-                LOGGER.info("Kokoro KPipeline loaded successfully")
+                # Kokoro uses single-letter language codes: 'a' (US English), 'b' (UK English),
+                # 'e' (Spanish), 'f' (French), etc.
+                k_lang = "a"  # Default
+                if self.voice and self.voice.startswith("e"):
+                    k_lang = "e"
+                elif self.voice and (
+                    self.voice.startswith("bf_") or self.voice.startswith("bm_")
+                ):
+                    k_lang = "b"
+                elif self.voice and (
+                    self.voice.startswith("af_") or self.voice.startswith("am_")
+                ):
+                    k_lang = "a"
+                elif self.lang.startswith("es"):
+                    k_lang = "e"
+                elif self.lang.startswith("en-gb"):
+                    k_lang = "b"
+                elif self.voice and "_" in self.voice and len(self.voice) > 2:
+                    # Heuristic: first letter of voice prefix often matches lang_code
+                    # (except for English which uses 'a'/'b')
+                    k_lang = self.voice[0]
+                else:
+                    # Fallback to first letter of language code
+                    k_lang = self.lang[0]
+
+                self.pipeline = KPipeline(lang_code=k_lang)
+                LOGGER.info(f"Kokoro KPipeline loaded with lang_code: {k_lang}")
             except ImportError:
                 # Fallback to alternative API
                 try:
@@ -388,7 +458,7 @@ def get_tts(
     elif b == "melo":
         # MeloTTS uses 2-letter codes
         melo_lang = "ES" if lang_code.startswith("es") else "EN"
-        return MeloTTSWrapper(lang=melo_lang)
+        return MeloTTSWrapper(lang=melo_lang, voice=voice)
     elif b == "coqui":
         return CoquiTTS(model_name=model_name, lang=lang_code)
     elif b == "chatterbox":

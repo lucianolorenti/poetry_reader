@@ -1,0 +1,93 @@
+# Video Generation Default Parameters
+# ====================================
+# These parameters are used when processing videos from Google Drive
+# You can override any of these via command-line flags
+
+video:
+  # Resolution
+  # ----------
+  resolution:
+    width: 1080
+    height: 1920  # 9:16 aspect ratio for TikTok/Instagram Reels
+  
+  # Orientation (vertical for mobile, horizontal for desktop)
+  vertical: true
+  
+  # Frames per second
+  fps: 30
+  
+  
+  # Text-to-Speech (TTS)
+  # --------------------
+  # Backend: "kokoro" (fast, recommended), "melo" (Spanish), "coqui", "chatterbox"
+  tts_backend: "melo"
+  
+  # Specific TTS model (optional, depends on backend)
+  tts_model: null
+  
+  # Voice ID (optional, depends on backend)
+  # Kokoro Spanish voices: "em_alex" (M), "em_santa" (M), "ef_dora" (F)
+  # Melo voices: numbers like "0", "1", "2"
+  tts_voice: null
+  
+  # Force language detection (optional)
+  # "es" for Spanish, "en" for English, null for auto-detect
+  force_lang: null
+  
+  
+  # Visual Settings
+  # ---------------
+  # Background image path (null = use gradient)
+  image_path: null
+  
+  # Gradient palette (if no image)
+  # Options: sunset, ocean, forest, lavender, rose, golden, midnight, peach, mint, autumn
+  # null = random palette
+  gradient_palette: null
+  
+  # Font size for text (in points)
+  font_size: 80
+  
+  # Fade in/out duration (seconds)
+  fade_duration: 0.5
+  
+  
+  # Visual Effects
+  # --------------
+  # Add floating particles overlay
+  add_particles: true
+  
+  # Number of particles (if enabled)
+  num_particles: 80
+  
+  # Enable zoom effect on background
+  zoom_background: true
+  
+  # TikTok optimization mode
+  tiktok_mode: true
+  
+  # Add sparkle effects
+  add_sparkles: true
+
+
+# Advanced Options
+# ----------------
+advanced:
+  # Audio settings
+  audio:
+    # Sample rate for TTS (Hz)
+    sample_rate: 22050
+    
+    # Pause duration for empty lines (seconds)
+    pause_duration: 0.6
+  
+  # Video encoding
+  encoding:
+    # Codec for video encoding
+    codec: "libx264"
+    
+    # Bitrate (higher = better quality, larger file)
+    bitrate: "5000k"
+    
+    # Preset: ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
+    preset: "medium"

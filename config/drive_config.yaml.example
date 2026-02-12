@@ -1,0 +1,68 @@
+# Google Drive Configuration for Poetry Reader
+# Copy this file to drive_config.yaml and fill in your actual Google Drive IDs
+
+drive:
+  # Folder where markdown files (.md) are stored
+  # The system will scan this folder and process all .md files
+  markdowns_folder_id: "YOUR_MARKDOWNS_FOLDER_ID_HERE"
+  
+  # Folder where generated videos will be uploaded
+  videos_output_folder_id: "YOUR_VIDEOS_FOLDER_ID_HERE"
+  
+  # Excel tracker file ID (the file that tracks which videos are processed)
+  # This file should have columns: Archivo, Hecho, video_drive_id, fecha_procesado, error
+  excel_tracker_id: "YOUR_EXCEL_TRACKER_ID_HERE"
+  
+  # Authentication settings
+  auth:
+    # Path to your Google Drive credentials JSON file
+    # Download from Google Cloud Console: https://console.cloud.google.com/
+    credentials_path: "credentials.json"
+    
+    # Path where tokens will be stored (auto-generated on first run)
+    token_path: "token.json"
+  
+  # Processing settings
+  processing:
+    # Maximum number of retries for Drive operations
+    max_retries: 3
+    
+    # Delay between retries (seconds)
+    retry_delay_seconds: 5
+
+# Local cache settings
+local:
+  # Directory for temporary files and downloaded content
+  cache_dir: "./drive_cache"
+  
+  # Directory for video output
+  output_dir: "./output"
+
+# Video generation settings
+video:
+  # Resolution (TikTok/Reels format: 1080x1920)
+  resolution:
+    width: 1080
+    height: 1920
+  
+  # Font settings
+  font_size: 80
+  
+  # Visual effects
+  add_particles: true
+  num_particles: 80
+  zoom_background: true
+  
+  # Audio/Video settings
+  fps: 30
+  fade_duration: 0.5
+  
+  # TTS settings
+  tts_backend: "kokoro"
+  tts_voice: "af_bella"  # or other Kokoro voices
+  
+  # Language force (optional, e.g., "es" for Spanish)
+  force_lang: "es"
+  
+  # TikTok optimization
+  tiktok_mode: true
