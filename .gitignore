@@ -174,3 +174,24 @@ poetry.toml
 pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python
+
+# Google Drive credentials (DO NOT COMMIT!)
+credentials/
+credentials.json
+token.json
+
+# Configuration files with sensitive data (DO NOT COMMIT!)
+drive_config.yaml
+
+# Local cache and output
+drive_cache/
+output/
+logs/
+
+# Temporary files
+*.wav
+*.mp4
+*_frags/
+
+# Keep example config file
+!drive_config.yaml.example

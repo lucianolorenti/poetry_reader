@@ -15,7 +15,6 @@ class Qwen3TTSWrapper:
     Installation: pip install qwen-tts
     """
 
-    # Language mapping for Qwen3-TTS
     LANG_MAP = {
         "es": "Spanish",
         "en": "English",
@@ -39,7 +38,7 @@ class Qwen3TTSWrapper:
         self.lang = lang.lower()
         self.device = device
         self.model = None
-        self.sr = 24000  # Qwen3-TTS uses 24kHz sample rate
+        self.sr = 24000
         self.model_name = model_name
         self.default_instruct = default_instruct or (
             "Voz de hombre maduro, con un registro muy grave y profundo. "
@@ -47,14 +46,12 @@ class Qwen3TTSWrapper:
             "Habla de forma pausada, con mucha autoridad suave y una resonancia baja."
         )
 
-        # Map language code to Qwen3-TTS language name
         self.qwen_lang = self.LANG_MAP.get(self.lang, "Spanish")
 
         try:
             LOGGER.info(f"Loading Qwen3-TTS model: {model_name}")
             from qwen_tts import Qwen3TTSModel
 
-            # Auto-detect device
             if device == "auto":
                 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -62,11 +59,7 @@ class Qwen3TTSWrapper:
                 model_name,
                 device_map=device,
                 dtype=torch.bfloat16 if device.startswith("cuda") else torch.float32,
-                
-                attn_implementation="eager"
-                # attn_implementation="flash_attention_2"
-                # if device.startswith("cuda")
-                # else "eager",
+                attn_implementation="eager",
             )
             LOGGER.info(f"Qwen3-TTS loaded successfully on {device}")
         except ImportError:
@@ -99,17 +92,14 @@ class Qwen3TTSWrapper:
         try:
             LOGGER.info(f"Generating audio for: {text[:50]}...")
 
-            # Use provided instruct or default
             voice_instruct = instruct if instruct else self.default_instruct
 
-            # Generate audio using VoiceDesign model
             wavs, sr = self.model.generate_voice_design(
                 text=text,
                 language=self.qwen_lang,
                 instruct=voice_instruct,
             )
 
-            # Save audio (wavs is a list, take first element)
             sf.write(out_path, wavs[0], sr)
             LOGGER.info(f"Audio saved to {out_path}")
 
@@ -139,7 +129,6 @@ def get_tts(
     """
     lang_code = (lang or "es").lower()
 
-    # Only Qwen3-TTS is supported
     return Qwen3TTSWrapper(
         lang=lang_code,
         model_name=model_name or "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",

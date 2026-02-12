@@ -45,6 +45,43 @@ def _measure_text(draw_obj, s, fnt):
         return (len(s) * 10, 20)
 
 
+def _wrap_text(text: str, draw_obj, font, max_width: int, max_lines: Optional[int]):
+    words = text.split()
+    if not words:
+        return [text]
+
+    lines = []
+    current = []
+
+    for word in words:
+        if not current:
+            current = [word]
+            continue
+
+        candidate = " ".join(current + [word])
+        if _measure_text(draw_obj, candidate, font)[0] <= max_width:
+            current.append(word)
+        else:
+            lines.append(" ".join(current))
+            current = [word]
+
+    if current:
+        lines.append(" ".join(current))
+
+    if max_lines and len(lines) > max_lines:
+        kept = lines[: max_lines - 1]
+        remaining = " ".join(lines[max_lines - 1 :])
+        kept.append(remaining)
+        lines = kept
+
+        if _measure_text(draw_obj, lines[-1], font)[0] > max_width:
+            avg_char_width = _measure_text(draw_obj, "A", font)[0]
+            chars_per_line = max(10, max_width // max(1, avg_char_width))
+            lines = textwrap.wrap(text, width=chars_per_line, break_long_words=False)
+
+    return lines
+
+
 def render_text_image(
     text: str,
     resolution: tuple,
@@ -155,9 +192,9 @@ def render_text_image(
     tmp_draw = ImageDraw.Draw(tmp)
 
     # Calculate wrapping
-    avg_char_width = _measure_text(tmp_draw, "A", font)[0]
-    chars_per_line = max(10, (width - padding * 2) // max(1, avg_char_width))
-    lines = textwrap.wrap(text, width=chars_per_line, break_long_words=False)
+    max_width = width - padding * 2
+    max_lines = 2 if tiktok else None
+    lines = _wrap_text(text, tmp_draw, font, max_width, max_lines)
 
     if not lines:
         lines = [text]
@@ -205,7 +242,9 @@ def render_text_image(
                 for offset in range(4, 0, -1):
                     alpha = int(100 - offset * 20)
                     shadow_color = (0, 0, 0, alpha) if bg_color is None else (0, 0, 0)
-                    draw.text((x + offset, y + offset), line, font=font, fill=shadow_color)
+                    draw.text(
+                        (x + offset, y + offset), line, font=font, fill=shadow_color
+                    )
             elif not youtube:
                 shadow_color = (0, 0, 0, 180) if bg_color is None else (0, 0, 0)
                 for dx, dy in [(2, 2), (1, 1)]:
@@ -286,6 +325,8 @@ def create_video_with_subtitles(
     audio_path: str,
     subtitles: list,
     out_path: str,
+    title: Optional[str] = None,
+    author: Optional[str] = None,
     image_path: Optional[str] = None,
     fps: int = 30,
     resolution=(1080, 1920),  # TikTok vertical format by default
@@ -307,6 +348,8 @@ def create_video_with_subtitles(
         audio_path: Path to audio file
         subtitles: List of dicts [{"text": str, "start": float, "duration": float}, ...]
         out_path: Output video path
+        title: Optional poem title for header
+        author: Optional author name for header
         image_path: Optional background image (if None, uses gradient)
         fps: Frames per second (default 30 for smooth TikTok)
         resolution: Video resolution (default 1080x1920 for TikTok vertical)
@@ -343,12 +386,14 @@ def create_video_with_subtitles(
                 # Start at bottom, move to top
                 y_offset = int((big_height - resolution[1]) * (1 - progress))
                 x_offset = (big_width - resolution[0]) // 2  # Center horizontally
-                cropped = img_resized.crop((
-                    x_offset,
-                    y_offset,
-                    x_offset + resolution[0],
-                    y_offset + resolution[1]
-                ))
+                cropped = img_resized.crop(
+                    (
+                        x_offset,
+                        y_offset,
+                        x_offset + resolution[0],
+                        y_offset + resolution[1],
+                    )
+                )
                 return np.array(cropped)
 
             bg = VideoClip(make_frame, duration=duration)
@@ -375,12 +420,9 @@ def create_video_with_subtitles(
                 # Start at bottom, move to top
                 y_offset = int((big_height - height) * (1 - progress))
                 x_offset = (big_width - width) // 2  # Center horizontally
-                cropped = big_img.crop((
-                    x_offset,
-                    y_offset,
-                    x_offset + width,
-                    y_offset + height
-                ))
+                cropped = big_img.crop(
+                    (x_offset, y_offset, x_offset + width, y_offset + height)
+                )
                 return np.array(cropped)
 
             bg = VideoClip(make_frame, duration=duration)
@@ -406,6 +448,35 @@ def create_video_with_subtitles(
             add_sparkles=add_sparkles,
         )
         clips_to_composite.append(particle_clip)
+
+    header_text = None
+    if title and author:
+        header_text = f"{title} — {author}"
+    elif title:
+        header_text = title
+    elif author:
+        header_text = author
+
+    if header_text:
+        header_padding = int(resolution[0] * 0.08) if tiktok_mode else 80
+        header_font_size = max(36, int(fontsize * 0.55))
+        header_img = render_text_image(
+            header_text,
+            resolution=resolution,
+            font_size=header_font_size,
+            color=text_color,
+            bg_color=None,
+            padding=header_padding,
+            valign="top",
+            shadow=True,
+            elegant=False,
+            youtube=False,
+            tiktok=tiktok_mode,
+        )
+        header_clip = (
+            ImageClip(header_img).with_duration(duration).with_position((0, 0))
+        )
+        clips_to_composite.append(header_clip)
 
     # Create elegant text clips with fade in/out using VideoClip
     text_clips = []

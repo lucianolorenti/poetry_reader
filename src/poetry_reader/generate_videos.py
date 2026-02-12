@@ -20,19 +20,15 @@ def detect_language(text: str) -> str:
     """
     if not text or not text.strip():
         return "en"
-    # Try langdetect
     if detect:
         try:
             code = detect(text)
-            # langdetect can return 'es' or 'en' etc.
             return code.split("-")[0]
         except Exception:
             pass
-    # Simple heuristic: common Spanish characters
     spanish_chars = set("áéíóúñÁÉÍÓÚÑ¿¡")
     if any(c in spanish_chars for c in text):
         return "es"
-    # Fallback: assume English
     return "en"
 
 
@@ -42,12 +38,9 @@ def normalize_text_for_tts(text: str) -> str:
     Converts: á->a, é->e, í->i, ó->o, ú->u, ñ->ñ (keep ñ)
     This helps with TTS models that don't support accented characters.
     """
-    # Normalize to NFD (decomposed form) then remove combining marks
-    # except for ñ/Ñ which we want to preserve
     nfd = unicodedata.normalize("NFD", text)
     result = []
     for char in nfd:
-        # Keep non-combining characters and also keep ñ/Ñ
         if char in "ñÑ":
             result.append(char)
         elif not unicodedata.combining(char):
@@ -63,7 +56,6 @@ def sanitize_filename(s: str) -> str:
 
 
 def split_text_into_sentences(text: str):
-    # División simple por signos de puntuación. Puedes mejorar con nltk/spaCy.
     import re
 
     parts = re.split(r"(?<=[\.\?!])\s+", text.strip())
@@ -75,7 +67,6 @@ def split_text_into_lines(text: str):
 
     We preserve empty lines so the video can insert short pauses where appropriate.
     """
-    # Normalize line endings and split
     if text is None:
         return []
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
@@ -87,12 +78,10 @@ def write_silence_wav(path: str, duration: float = 0.6, framerate: int = 22050):
     import wave
 
     n_frames = int(duration * framerate)
-    # 16-bit PCM, mono
     with wave.open(path, "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(framerate)
-        # write silence frames (zeros)
         wf.writeframes(b"\x00\x00" * n_frames)
 
 
@@ -107,7 +96,6 @@ def parse_md_file(path: str):
     with open(path, "r", encoding="utf-8") as f:
         lines = [l.rstrip("\n\r") for l in f.readlines()]
 
-    # Find non-empty lines
     stripped = [ln.strip() for ln in lines]
     non_empty = [ln for ln in stripped if ln != ""]
 
@@ -115,7 +103,6 @@ def parse_md_file(path: str):
     author = None
     content_lines = []
 
-    # Try to parse first two non-empty lines as key: value
     if len(non_empty) >= 1:
         first = non_empty[0]
         if ":" in first:
@@ -130,7 +117,6 @@ def parse_md_file(path: str):
             if key.strip().lower() in ("autor", "author"):
                 author = val.strip()
 
-    # If title/author not found, attempt to find lines starting with those labels anywhere
     if title is None or author is None:
         for ln in stripped[:4]:
             if ln and ":" in ln:
@@ -141,10 +127,7 @@ def parse_md_file(path: str):
                 if author is None and k in ("autor", "author"):
                     author = val.strip()
 
-    # Determine content: everything after the second header line if headers were present,
-    # otherwise everything after the first two lines in the original file.
     start_idx = 0
-    # Find the index in original lines where the content should start
     header_count = 0
     for i, ln in enumerate(lines):
         if ln.strip() == "":
@@ -156,7 +139,6 @@ def parse_md_file(path: str):
         if header_count >= 2:
             start_idx = i
             break
-    # If we never found two headers, try to set start after the two first non-empty lines
     if header_count < 2:
         count = 0
         for i, ln in enumerate(lines):
@@ -167,13 +149,11 @@ def parse_md_file(path: str):
                     break
 
     content_lines = lines[start_idx:]
-    # Strip leading blank lines
     while content_lines and content_lines[0].strip() == "":
         content_lines = content_lines[1:]
 
     content = "\n".join(content_lines).strip()
 
-    # Fallbacks
     if not title:
         title = os.path.splitext(os.path.basename(path))[0]
     if not author:
@@ -213,7 +193,6 @@ def main(
     """
     os.makedirs(out_dir, exist_ok=True)
 
-    # Find all .md files in the input directory
     pattern = os.path.join(input_dir, "*.md")
     files = sorted(glob(pattern))
 
@@ -221,7 +200,6 @@ def main(
         print(f"No se encontraron archivos .md en: {os.path.abspath(input_dir)}")
         return
 
-    # Cache CoquiTTS instances per language to avoid reloading models repeatedly
     tts_cache = {}
 
     for idx, path in enumerate(files):
@@ -231,7 +209,6 @@ def main(
             print(f"Error al parsear {path}: {e}")
             continue
 
-        # Sanitize and truncate filename to avoid OS errors
         raw_name = f"{idx + 1}_{title}"
         safe_name = sanitize_filename(raw_name)
         if len(safe_name) > 80:
@@ -241,7 +218,6 @@ def main(
         audio_frag_dir = os.path.join(out_dir, base_name + "_frags")
         os.makedirs(audio_frag_dir, exist_ok=True)
 
-        # Detect or force language
         if force_lang:
             lang = force_lang
         else:
@@ -262,12 +238,10 @@ def main(
         subtitles = []
         start_time = 0.0
 
-        # Generar audio por línea y medir duración. Lineas vacías generan una pausa.
         for j, line in enumerate(lines):
             frag_path = os.path.join(audio_frag_dir, f"frag_{j + 1}.wav")
             if line.strip() == "":
-                # Write a short silence file to use as a pause
-                write_silence_wav(frag_path, duration=0.6)
+                write_silence_wav(frag_path, duration=0.15)
                 clip = AudioFileClip(frag_path)
                 dur = clip.duration
                 fragments.append(clip)
@@ -275,32 +249,30 @@ def main(
                 start_time += dur
                 continue
 
-            # Normalize text for TTS (remove accents) but keep original for display
-            # tts_text = normalize_text_for_tts(line)
             tts.synthesize_to_file(line, frag_path)
             clip = AudioFileClip(frag_path)
+            if clip.duration > 0.1:
+                clip = clip.subclipped(0, clip.duration - 0.1)
             dur = clip.duration
             fragments.append(clip)
-            # Use original line for subtitles (preserve accents)
             subtitles.append({"text": line, "start": start_time, "duration": dur})
             start_time += dur
 
-        # Concatenar audios
         if fragments:
             final_audio = concatenate_audioclips(fragments)
             final_audio_path = os.path.join(out_dir, base_name + ".wav")
             final_audio.write_audiofile(final_audio_path)
-            # close fragments
             for c in fragments:
                 c.close()
             final_audio.close()
 
-            # Crear video con subtitles (optimizado para TikTok)
             video_path = os.path.join(out_dir, base_name + ".mp4")
             create_video_with_subtitles(
                 audio_path=final_audio_path,
                 subtitles=subtitles,
                 out_path=video_path,
+                title=title,
+                author=author,
                 image_path=image_path,
                 fps=fps,
                 resolution=resolution,
@@ -314,7 +286,6 @@ def main(
                 add_sparkles=True,
             )
 
-            # limpiar fragmentos intermedios
             try:
                 for f in os.listdir(audio_frag_dir):
                     os.remove(os.path.join(audio_frag_dir, f))
