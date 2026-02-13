@@ -1,4 +1,5 @@
 import os
+import logging
 from glob import glob
 from tqdm import tqdm
 from typing import Optional
@@ -11,6 +12,8 @@ from .ttsgenerator import get_tts
 
 
 from langdetect import detect
+
+LOGGER = logging.getLogger(__name__)
 
 
 def detect_language(text: str) -> str:
@@ -175,7 +178,9 @@ def main(
     num_particles: int = 80,
     tts_backend: str = "qwen3",
     tts_model: Optional[str] = None,
-    tts_instruct: Optional[str] = None,
+    tts_reference_wav: Optional[str] = None,
+    device: str = "auto",
+    tts_model_size: str = "1.7B",
     resolution: tuple = (1080, 1920),
     tiktok_mode: bool = True,
     zoom_background: bool = True,
@@ -223,14 +228,17 @@ def main(
         else:
             lang = detect_language(text)
 
-        tts_key = f"{tts_backend}:{lang}:{tts_model or ''}:{tts_instruct or ''}"
+        tts_key = f"{tts_backend}:{lang}:{tts_model or ''}:{tts_reference_wav or ''}:{device}:{tts_model_size}"
         if tts_key not in tts_cache:
             tts_cache[tts_key] = get_tts(
                 backend=tts_backend,
                 lang=lang,
                 model_name=tts_model,
-                instruct=tts_instruct,
+                reference_wav_path=tts_reference_wav,
+                device=device,
+                model_size=tts_model_size,
             )
+        print(tts_key)
         tts = tts_cache[tts_key]
 
         lines = split_text_into_lines(text)
@@ -238,30 +246,110 @@ def main(
         subtitles = []
         start_time = 0.0
 
+        # Prepare batch synthesis: collect all non-empty lines and their paths
+        texts_to_synthesize = []
+        paths_to_synthesize = []
+        line_indices = []  # Keep track of which lines are text (not silence)
+
         for j, line in enumerate(lines):
             frag_path = os.path.join(audio_frag_dir, f"frag_{j + 1}.wav")
             if line.strip() == "":
-                write_silence_wav(frag_path, duration=0.15)
+                # Mark as silence (will be handled separately)
+                line_indices.append((j, None, frag_path))
+            else:
+                texts_to_synthesize.append(line)
+                paths_to_synthesize.append(frag_path)
+                line_indices.append((j, len(texts_to_synthesize) - 1, frag_path))
+
+        # Generate all audios in a single batch for consistent voice
+        if texts_to_synthesize:
+            LOGGER.info(
+                f"Synthesizing {len(texts_to_synthesize)} text segments in batch..."
+            )
+            LOGGER.info(f"Text segments: {texts_to_synthesize}")
+            LOGGER.info(f"Output paths: {paths_to_synthesize}")
+            tts.synthesize_batch_to_files(
+                texts=texts_to_synthesize,
+                out_paths=paths_to_synthesize,
+            )
+            # Verify files were created
+            for path in paths_to_synthesize:
+                if os.path.exists(path):
+                    size = os.path.getsize(path)
+                    LOGGER.info(f"Generated file: {path}, size: {size} bytes")
+                else:
+                    LOGGER.error(f"Missing file: {path}")
+
+        # Process all segments in order (silences and synthesized texts)
+        LOGGER.info(f"Processing {len(line_indices)} segments...")
+        for j, text_idx, frag_path in line_indices:
+            line = lines[j]
+            LOGGER.info(
+                f"Processing segment {j}: text_idx={text_idx}, path={frag_path}"
+            )
+
+            if line.strip() == "":
+                # Silence segment
+                write_silence_wav(frag_path, duration=0.5)
                 clip = AudioFileClip(frag_path)
                 dur = clip.duration
+                LOGGER.info(f"Silence {j}: duration={dur:.2f}s")
+                # Use subclip to ensure moviepy respects the exact duration
+                clip = clip.subclipped(0, dur)
                 fragments.append(clip)
                 subtitles.append({"text": "", "start": start_time, "duration": dur})
                 start_time += dur
-                continue
-
-            tts.synthesize_to_file(line, frag_path)
-            clip = AudioFileClip(frag_path)
-            if clip.duration > 0.1:
-                clip = clip.subclipped(0, clip.duration - 0.1)
-            dur = clip.duration
-            fragments.append(clip)
-            subtitles.append({"text": line, "start": start_time, "duration": dur})
-            start_time += dur
+            else:
+                # Text segment (already synthesized)
+                if not os.path.exists(frag_path):
+                    LOGGER.error(f"Audio file missing: {frag_path}")
+                    continue
+                file_size = os.path.getsize(frag_path)
+                LOGGER.info(f"Text {j}: loading {frag_path} ({file_size} bytes)")
+                clip = AudioFileClip(frag_path)
+                LOGGER.info(
+                    f"Text {j}: loaded, duration={clip.duration:.2f}s, fps={clip.fps}"
+                )
+                # Keep full audio - do not trim
+                dur = clip.duration
+                LOGGER.info(
+                    f"Text {j}: final duration={dur:.2f}s, line='{line[:30]}...'"
+                )
+                # Use subclip to ensure moviepy respects the exact duration
+                clip = clip.subclipped(0, dur)
+                fragments.append(clip)
+                subtitles.append({"text": line, "start": start_time, "duration": dur})
+                start_time += dur
 
         if fragments:
+            total_duration = sum(c.duration for c in fragments)
+            # Check sample rates are consistent
+            sample_rates = [c.fps for c in fragments]
+            LOGGER.info(f"Fragment sample rates: {sample_rates}")
+            if len(set(sample_rates)) > 1:
+                LOGGER.warning(
+                    f"WARNING: Different sample rates detected: {set(sample_rates)}"
+                )
+
+            LOGGER.info(
+                f"Concatenating {len(fragments)} fragments, total duration: {total_duration:.2f}s"
+            )
             final_audio = concatenate_audioclips(fragments)
             final_audio_path = os.path.join(out_dir, base_name + ".wav")
-            final_audio.write_audiofile(final_audio_path)
+            LOGGER.info(f"Writing final audio to {final_audio_path}")
+            # Write with explicit codec and parameters to avoid truncation
+            final_audio.write_audiofile(
+                final_audio_path,
+                codec="pcm_s16le",  # Standard WAV codec
+                fps=24000,  # Match TTS sample rate
+                nbytes=2,  # 16-bit
+                buffersize=2000,
+            )
+            LOGGER.info(f"Final audio duration: {final_audio.duration:.2f}s")
+            # Verify file was written correctly
+            if os.path.exists(final_audio_path):
+                file_size = os.path.getsize(final_audio_path)
+                LOGGER.info(f"Final audio file size: {file_size} bytes")
             for c in fragments:
                 c.close()
             final_audio.close()

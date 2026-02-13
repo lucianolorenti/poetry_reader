@@ -40,4 +40,4 @@ build-backend = "uv_build"
 
 [tool.uv.extra-build-dependencies]
 pkuseg = ["numpy"]
-flash-attn = ["torch"]
+

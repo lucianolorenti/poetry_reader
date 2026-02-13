@@ -72,7 +72,16 @@ class ExcelTracker:
             # Add optional columns if they don't exist
             for col in self.OPTIONAL_COLUMNS:
                 if col not in self.df.columns:
-                    self.df[col] = None
+                    # Use object dtype for string columns to avoid float conversion issues
+                    if col == "video_drive_id":
+                        self.df[col] = pd.Series(dtype="object")
+                    else:
+                        self.df[col] = None
+
+            # Ensure video_drive_id is always object dtype (not float64)
+            # This prevents errors when assigning string IDs
+            if "video_drive_id" in self.df.columns:
+                self.df["video_drive_id"] = self.df["video_drive_id"].astype("object")
 
             # Normalize 'Hecho' column to boolean
             self._normalize_hecho_column()
@@ -181,18 +190,26 @@ class ExcelTracker:
         if self.df is None:
             raise TrackerError("Excel not loaded. Call load() first.")
 
-        new_row = {
-            "Archivo": filename,
-            "Hecho": False,
-            "video_drive_id": None,
-            "fecha_procesado": None,
-            "error": None,
-        }
+        # Create new row DataFrame to preserve dtypes
+        new_row_df = pd.DataFrame(
+            [
+                {
+                    "Archivo": filename,
+                    "Hecho": False,
+                    "video_drive_id": None,
+                    "fecha_procesado": None,
+                    "error": None,
+                }
+            ]
+        )
 
-        # Add new row
-        new_idx = len(self.df)
-        self.df.loc[new_idx] = new_row
+        # Concatenate preserving dtypes
+        self.df = pd.concat([self.df, new_row_df], ignore_index=True)
 
+        # Ensure video_drive_id remains object dtype
+        self.df["video_drive_id"] = self.df["video_drive_id"].astype("object")
+
+        new_idx = len(self.df) - 1
         print(f"[poetry-reader] ✓ Added new file to tracker: {filename}")
         return new_idx
 

@@ -3,6 +3,14 @@ from pathlib import Path
 from typing import Optional
 from .generate_videos import main as generate_main
 import os
+import logging
+
+# Configure logging to show INFO messages
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(name)s] %(levelname)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 app = typer.Typer(help="Poetry Reader CLI")
 
@@ -35,13 +43,21 @@ def generate(
     num_particles: int = typer.Option(
         80, help="Número de partículas en el overlay (si está activado)"
     ),
-    tts_instruct: Optional[str] = typer.Option(
-        None,
-        help="Instrucción de voz para Qwen3-TTS VoiceDesign (descripción de la voz deseada)",
-    ),
     tts_model: Optional[str] = typer.Option(
-        "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-        help="Modelo Qwen3-TTS (default: Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign)",
+        "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+        help="Modelo Qwen3-TTS (default: Qwen/Qwen3-TTS-12Hz-1.7B-Base para voice cloning)",
+    ),
+    tts_reference_wav: str = typer.Option(
+        ...,  # Required
+        help="Ruta al archivo WAV de referencia para voice cloning (REQUIRED). Generate with: generate-voice-reference",
+    ),
+    device: str = typer.Option(
+        "auto",
+        help="Device para TTS: 'auto' (default, usa CUDA si disponible), 'cpu', 'cuda', 'cuda:0', etc.",
+    ),
+    tts_model_size: str = typer.Option(
+        "1.7B",
+        help="Tamaño del modelo TTS: '1.7B' (calidad alta, ~8GB VRAM) o '0.6B' (más rápido, ~3GB VRAM)",
     ),
     vertical: bool = typer.Option(
         True,
@@ -68,7 +84,9 @@ def generate(
         num_particles=num_particles,
         tts_backend="qwen3",
         tts_model=tts_model,
-        tts_instruct=tts_instruct,
+        tts_reference_wav=tts_reference_wav,
+        device=device,
+        tts_model_size=tts_model_size,
         resolution=resolution,
         tiktok_mode=True,
         zoom_background=not no_zoom,
@@ -78,13 +96,9 @@ def generate(
 @app.command("tts-generate")
 def tts_generate(
     text: str = typer.Option(..., help="Texto a sintetizar"),
-    instruct: Optional[str] = typer.Option(
-        None,
-        help="Instrucción/detalle de voz (ej: 'Voz grave y pausada de narrador de documentales')",
-    ),
-    model: Optional[str] = typer.Option(
-        "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-        help="Modelo Qwen3-TTS (default: Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign)",
+    reference_wav: str = typer.Option(
+        ...,  # Required
+        help="Ruta al archivo WAV de referencia para voice cloning",
     ),
     device: Optional[str] = typer.Option(
         "auto", help="Device para el modelo ('auto', 'cpu', 'cuda')"
@@ -92,14 +106,13 @@ def tts_generate(
     lang: Optional[str] = typer.Option("es", help="Idioma (es=español, en=inglés)"),
     out: Path = typer.Option(Path("./out.wav"), help="Ruta de salida para el WAV"),
 ):
-    """Genera un archivo WAV a partir de `text` usando Qwen3-TTS VoiceDesign."""
+    """Genera un archivo WAV a partir de `text` usando voice cloning desde referencia."""
     from .ttsgenerator import Qwen3TTSWrapper
 
     tts = Qwen3TTSWrapper(
         lang=lang or "es",
         device=device or "auto",
-        model_name=model or "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-        default_instruct=instruct,
+        reference_wav_path=reference_wav,
     )
 
     out = out.resolve()
@@ -108,6 +121,50 @@ def tts_generate(
     tts.synthesize_to_file(text, str(out))
 
     typer.echo(f"WAV generado: {out}")
+
+
+@app.command("generate-voice-reference")
+def generate_voice_reference_cmd(
+    instruct: str = typer.Option(
+        ...,
+        help="Descripción de la voz deseada (ej: 'Voz grave y pausada de narrador de poemas')",
+    ),
+    out: Path = typer.Option(
+        Path("assets/voice_reference.wav"),
+        help="Ruta de salida para el archivo de referencia",
+    ),
+    lang: Optional[str] = typer.Option("es", help="Idioma (es=español, en=inglés)"),
+    device: Optional[str] = typer.Option(
+        "auto", help="Device para el modelo ('auto', 'cpu', 'cuda')"
+    ),
+):
+    """Genera un archivo WAV de referencia para voice cloning consistente.
+
+    Este archivo se usa como referencia para mantener la misma voz
+    en todas las generaciones posteriores.
+
+    Ejemplo:
+        poetry-reader generate-voice-reference --instruct "Voz grave y pausada"
+    """
+    from .ttsgenerator import generate_voice_reference
+
+    out = out.resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        generate_voice_reference(
+            instruct=instruct,
+            output_path=str(out),
+            lang=lang or "es",
+            device=device or "auto",
+        )
+        typer.echo(f"Archivo de referencia generado: {out}")
+        typer.echo(
+            "Este archivo puede usarse en la configuración de video para mantener consistencia de voz."
+        )
+    except Exception as e:
+        typer.echo(f"Error generando referencia: {e}", err=True)
+        raise typer.Exit(1)
 
 
 @app.command("process-drive")

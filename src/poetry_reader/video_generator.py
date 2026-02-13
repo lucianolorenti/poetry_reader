@@ -367,8 +367,14 @@ def create_video_with_subtitles(
     """
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
+    import logging
+
+    LOGGER = logging.getLogger(__name__)
+
+    LOGGER.info(f"Loading audio for video from: {audio_path}")
     audio = AudioFileClip(audio_path)
     duration = audio.duration
+    LOGGER.info(f"Audio loaded: duration={duration:.2f}s, fps={audio.fps}")
 
     # Create beautiful gradient background or use provided image
     if image_path and os.path.exists(image_path):

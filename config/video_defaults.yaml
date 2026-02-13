@@ -1,93 +1,55 @@
-# Video Generation Default Parameters
-# ====================================
-# These parameters are used when processing videos from Google Drive
-# You can override any of these via command-line flags
+# Video Generation Configuration
+# ==============================
 
 video:
-  # Resolution
-  # ----------
+  # Core settings
   resolution:
     width: 1080
-    height: 1920  # 9:16 aspect ratio for TikTok/Instagram Reels
-  
-  # Orientation (vertical for mobile, horizontal for desktop)
-  vertical: true
-  
-  # Frames per second
+    height: 1920  # 9:16 for TikTok/Reels
   fps: 30
-  
-  
-  # Text-to-Speech (TTS)
+
+  # Device for TTS model
   # --------------------
-  # Backend: "kokoro" (fast, recommended), "melo" (Spanish), "coqui", "chatterbox"
-  tts_backend: "melo"
+  # Options: "auto" (default, uses CUDA if available), "cpu", "cuda", "cuda:0", etc.
+  # Use "cpu" if you have limited VRAM or no GPU
+  device: "auto"
   
-  # Specific TTS model (optional, depends on backend)
-  tts_model: null
-  
-  # Voice ID (optional, depends on backend)
-  # Kokoro Spanish voices: "em_alex" (M), "em_santa" (M), "ef_dora" (F)
-  # Melo voices: numbers like "0", "1", "2"
-  tts_voice: null
-  
-  # Force language detection (optional)
-  # "es" for Spanish, "en" for English, null for auto-detect
-  force_lang: null
-  
-  
+  # TTS Model size
+  # --------------
+  # Options: "1.7B" (higher quality, needs ~8GB VRAM)
+  #          "0.6B" (default, faster, lower VRAM, needs ~3GB VRAM)
+  # Use "0.6B" if you get CUDA out of memory errors
+  tts_model_size: "0.6B"
+
+  # Voice Configuration (REQUIRED)
+  # ------------------------------
+  # Path to reference voice WAV file for voice cloning
+  # Generate with: poetry-reader generate-voice-reference --instruct "..." --out assets/voice.wav
+  # REQUIRED: Video generation will fail if this file doesn't exist
+  tts_reference_wav: "assets/voice_reference.wav"
+
   # Visual Settings
   # ---------------
-  # Background image path (null = use gradient)
-  image_path: null
-  
-  # Gradient palette (if no image)
-  # Options: sunset, ocean, forest, lavender, rose, golden, midnight, peach, mint, autumn
-  # null = random palette
-  gradient_palette: null
-  
-  # Font size for text (in points)
   font_size: 80
-  
-  # Fade in/out duration (seconds)
-  fade_duration: 0.5
-  
-  
-  # Visual Effects
-  # --------------
-  # Add floating particles overlay
+  gradient_palette: null  # Options: sunset, ocean, forest, lavender, rose, golden, midnight, peach, mint, autumn
+  image_path: null  # null = use gradient background
+
+  # Effects
   add_particles: true
-  
-  # Number of particles (if enabled)
-  num_particles: 80
-  
-  # Enable zoom effect on background
   zoom_background: true
-  
-  # TikTok optimization mode
-  tiktok_mode: true
-  
-  # Add sparkle effects
-  add_sparkles: true
+
+  # Language detection (null = auto-detect)
+  force_lang: null
 
 
-# Advanced Options
-# ----------------
+# Advanced settings (usually don't need to change)
+# ------------------------------------------------
 advanced:
-  # Audio settings
   audio:
-    # Sample rate for TTS (Hz)
     sample_rate: 22050
-    
-    # Pause duration for empty lines (seconds)
     pause_duration: 0.6
   
-  # Video encoding
   encoding:
-    # Codec for video encoding
     codec: "libx264"
-    
-    # Bitrate (higher = better quality, larger file)
     bitrate: "5000k"
-    
-    # Preset: ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
     preset: "medium"

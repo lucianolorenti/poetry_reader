@@ -5,10 +5,15 @@ Handles OAuth2 authentication flow and credential management.
 """
 
 import os
+import sys
+import json
+import urllib.request
+import urllib.parse
 from pathlib import Path
 from typing import Optional
 from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
+from oauth2client.client import OAuth2Credentials
 
 
 class DriveAuthError(Exception):
@@ -61,6 +66,7 @@ def authenticate(
     cred_dir.mkdir(parents=True, exist_ok=True)
 
     # Check if client_secrets.json exists
+
     if not os.path.exists(client_secrets_path):
         raise DriveAuthError(
             f"client_secrets.json not found at: {client_secrets_path}\n\n"
@@ -86,16 +92,111 @@ def authenticate(
         gauth = GoogleAuth(settings_file=settings_file)
 
         # Load client configuration from client_secrets.json
-        gauth.LoadClientConfigFile()
+        gauth.LoadClientConfigFile(client_secrets_path)
 
         # Try to load saved credentials
         gauth.LoadCredentialsFile(credentials_path)
 
         if gauth.credentials is None:
             # No credentials found, start OAuth flow
-            print("[poetry-reader] Starting OAuth2 authentication flow...")
-            print("[poetry-reader] A browser window will open for authorization.")
-            gauth.LocalWebserverAuth()
+            print("[poetry-reader] Starting OAuth2 Authorization Code flow...")
+            print()
+
+            # Get client config
+            client_id = gauth.client_config["client_id"]
+            client_secret = gauth.client_config["client_secret"]
+            scopes = [
+                "https://www.googleapis.com/auth/drive",
+                "https://www.googleapis.com/auth/drive.file",
+            ]
+
+            # Generate authorization URL
+            import secrets
+
+            state = secrets.token_urlsafe(32)
+
+            auth_params = {
+                "client_id": client_id,
+                "redirect_uri": "urn:ietf:wg:oauth:2.0:oob",
+                "scope": " ".join(scopes),
+                "response_type": "code",
+                "access_type": "offline",
+                "prompt": "consent",
+                "state": state,
+            }
+
+            auth_url = (
+                "https://accounts.google.com/o/oauth2/v2/auth?"
+                + urllib.parse.urlencode(auth_params)
+            )
+
+            # Show instructions
+            print("=" * 70)
+            print("AUTHENTICATION REQUIRED")
+            print("=" * 70)
+            print()
+            print("Since this is a remote server, please follow these steps:")
+            print()
+            print("1. Copy this URL and open it in your local browser:")
+            print(f"   {auth_url}")
+            print()
+            print("2. Sign in with your Google account and authorize the app")
+            print()
+            print("3. Google will show you an authorization code")
+            print("   (starts with something like '4/...')")
+            print()
+            print("4. Copy that code and paste it below:")
+            print("=" * 70)
+            print()
+
+            # Get authorization code from user
+            auth_code = input("Enter authorization code: ").strip()
+
+            if not auth_code:
+                raise DriveAuthError("No authorization code provided")
+
+            # Exchange code for tokens
+            print("[poetry-reader] Exchanging code for tokens...")
+
+            token_data = urllib.parse.urlencode(
+                {
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "code": auth_code,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": "urn:ietf:wg:oauth:2.0:oob",
+                }
+            ).encode("utf-8")
+
+            token_req = urllib.request.Request(
+                "https://oauth2.googleapis.com/token",
+                data=token_data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                method="POST",
+            )
+
+            with urllib.request.urlopen(token_req) as response:
+                token_response = json.loads(response.read().decode("utf-8"))
+
+            # Success! Create OAuth2Credentials object
+            import datetime
+
+            token_expiry = datetime.datetime.utcnow() + datetime.timedelta(
+                seconds=token_response["expires_in"]
+            )
+
+            gauth.credentials = OAuth2Credentials(
+                access_token=token_response["access_token"],
+                client_id=client_id,
+                client_secret=client_secret,
+                refresh_token=token_response.get("refresh_token"),
+                token_expiry=token_expiry,
+                token_uri="https://oauth2.googleapis.com/token",
+                user_agent="poetry-reader/1.0",
+                scopes=scopes,
+            )
+
+            print("[poetry-reader] ✓ Authenticated successfully!")
         elif gauth.access_token_expired:
             # Credentials expired, refresh
             print("[poetry-reader] Refreshing expired access token...")

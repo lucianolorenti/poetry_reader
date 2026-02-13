@@ -6,6 +6,7 @@ generating videos, uploading to Drive, and updating the tracker.
 """
 
 import glob
+import logging
 import os
 import random
 import tempfile
@@ -18,6 +19,13 @@ from datetime import datetime
 from .drive.manager import DriveManager
 from .drive.tracker import ExcelTracker
 from .generate_videos import main as generate_video
+
+# Configure logging to show INFO messages
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(name)s] %(levelname)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 
 @dataclass
@@ -219,6 +227,9 @@ class VideoOrchestrator:
         for i, markdown_data in enumerate(pending, 1):
             print(f"\n[{i}/{len(pending)}] Processing: '{markdown_data['titulo']}'")
             print(f"  Author: {markdown_data['autor']}")
+            print(
+                f"  [DEBUG] About to call process_single_markdown for index {markdown_data['index']}"
+            )
 
             if dry_run:
                 print("  [DRY RUN] Skipping actual processing")
@@ -246,6 +257,18 @@ class VideoOrchestrator:
             # Save tracker after each processing (incremental saves)
             try:
                 self.tracker.save()
+                print("[poetry-reader] ✓ Tracker saved locally")
+
+                # Upload tracker to Drive immediately after each video
+                excel_file_id = self.drive_config.get("excel_tracker_id")
+                if excel_file_id:
+                    try:
+                        self.drive_manager.update_file(
+                            excel_file_id, self.tracker.excel_path
+                        )
+                        print("[poetry-reader] ✓ Tracker uploaded to Drive")
+                    except Exception as e:
+                        print(f"  [WARNING] Failed to upload tracker to Drive: {e}")
             except Exception as e:
                 print(f"  [WARNING] Failed to save tracker: {e}")
 
@@ -303,17 +326,22 @@ class VideoOrchestrator:
 
         try:
             print(f"  → Processing markdown: {md_file.name}")
+            print(f"  [DEBUG] Starting video generation for index {index}")
 
             # Generate video
             print(f"  → Generating video...")
             self._generate_video(md_file)
+            print(f"  [DEBUG] Video generation completed", flush=True)
 
             # Find generated video file
+            print(f"  [DEBUG] Looking for video file with title: {titulo}")
             video_file = self._find_generated_video(titulo)
+            print(f"  [DEBUG] Found video file: {video_file}")
             if not video_file or not video_file.exists():
                 raise OrchestratorError(f"Video file not found after generation")
 
             print(f"  → Video generated: {video_file.name}")
+            print(f"  [DEBUG] About to start upload process")
 
             # Upload video to Drive
             videos_folder_id = self.drive_config.get("videos_output_folder_id")
@@ -332,14 +360,22 @@ class VideoOrchestrator:
                 print(f"  → Replacing existing file: {video_file.name}")
                 self.drive_manager.delete_file(existing_file.id)
 
-            video_id = self.drive_manager.upload_file(
-                str(video_file), videos_folder_id, video_file.name
-            )
+            print(f"  → Uploading {video_file.name} to folder {videos_folder_id}...")
+            try:
+                video_id = self.drive_manager.upload_file(
+                    str(video_file), videos_folder_id, video_file.name
+                )
+                print(f"  → Video uploaded with ID: {video_id}")
+            except Exception as upload_error:
+                print(f"  ✗ Upload failed: {upload_error}")
+                raise OrchestratorError(f"Failed to upload video: {upload_error}")
 
             # Get shareable link for reporting (not saved to Excel)
             try:
                 video_url = self.drive_manager.get_shareable_link(video_id)
-            except Exception:
+                print(f"  → Shareable link: {video_url}")
+            except Exception as link_error:
+                print(f"  [WARNING] Could not get shareable link: {link_error}")
                 video_url = f"https://drive.google.com/file/d/{video_id}"
 
             # Mark as processed in tracker
@@ -442,29 +478,40 @@ class VideoOrchestrator:
             shutil.copy(markdown_file, temp_md_copy)
 
             # Call generate_videos.main()
-            generate_video(
-                input_dir=str(temp_input_dir),
-                out_dir=str(self.output_dir),
-                image_path=image_path,
-                gradient_palette=self.video_config.get("gradient_palette"),
-                add_particles=self.video_config.get("add_particles", True),
-                font_size=self.video_config.get("font_size", 80),
-                fade_duration=self.video_config.get("fade_duration", 0.5),
-                force_lang=self.video_config.get("force_lang"),
-                fps=self.video_config.get("fps", 30),
-                num_particles=self.video_config.get("num_particles", 80),
-                tts_backend=self.video_config.get("tts_backend", "kokoro"),
-                tts_model=self.video_config.get("tts_model"),
-                tts_voice=self.video_config.get("tts_voice"),
-                resolution=resolution,
-                tiktok_mode=self.video_config.get("tiktok_mode", True),
-                zoom_background=self.video_config.get("zoom_background", True),
-            )
+            print(f"  [DEBUG] Calling generate_video with input_dir={temp_input_dir}")
+            try:
+                generate_video(
+                    input_dir=str(temp_input_dir),
+                    out_dir=str(self.output_dir),
+                    image_path=image_path,
+                    gradient_palette=self.video_config.get("gradient_palette"),
+                    add_particles=self.video_config.get("add_particles", True),
+                    font_size=self.video_config.get("font_size", 80),
+                    fade_duration=self.video_config.get("fade_duration", 0.5),
+                    force_lang=self.video_config.get("force_lang"),
+                    fps=self.video_config.get("fps", 30),
+                    num_particles=self.video_config.get("num_particles", 80),
+                    tts_backend="qwen3",
+                    tts_model=self.video_config.get("tts_model"),
+                    tts_reference_wav=self.video_config.get("tts_reference_wav"),
+                    device=self.video_config.get("device", "auto"),
+                    tts_model_size=self.video_config.get("tts_model_size", "1.7B"),
+                    resolution=resolution,
+                    tiktok_mode=self.video_config.get("tiktok_mode", True),
+                    zoom_background=self.video_config.get("zoom_background", True),
+                )
+                print(f"  [DEBUG] generate_video completed successfully")
+            except Exception as gen_error:
+                print(f"  [DEBUG] generate_video failed with error: {gen_error}")
+                raise
 
             # Cleanup temp input dir
+            print(f"  [DEBUG] Cleaning up temp directory")
             shutil.rmtree(temp_input_dir)
+            print(f"  [DEBUG] Cleanup completed")
 
         except Exception as e:
+            print(f"  [DEBUG] Exception in _generate_video: {e}")
             raise OrchestratorError(f"Video generation failed: {str(e)}") from e
 
     def _find_generated_video(self, titulo: str) -> Optional[Path]:
