@@ -3,7 +3,7 @@
 from typing import Optional
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 import random
 import math
 
@@ -64,7 +64,10 @@ class Particle:
         self.time += dt * 0.1
 
         # Sway motion for organic feel
-        sway = math.sin(self.time * self.sway_frequency + self.sway_phase) * self.sway_amplitude
+        sway = (
+            math.sin(self.time * self.sway_frequency + self.sway_phase)
+            * self.sway_amplitude
+        )
 
         # Update position
         self.x += self.vx + sway * 0.1
@@ -103,13 +106,15 @@ class Sparkle:
         self.size = random.uniform(5, 20)
         self.max_life = random.uniform(0.5, 2.0)
         self.life = self.max_life
-        self.color = random.choice([
-            (255, 255, 255),
-            (255, 215, 0),  # Gold
-            (255, 105, 180),  # Pink
-            (0, 255, 255),  # Cyan
-            (255, 255, 150),  # Yellow
-        ])
+        self.color = random.choice(
+            [
+                (255, 255, 255),
+                (255, 215, 0),  # Gold
+                (255, 105, 180),  # Pink
+                (0, 255, 255),  # Cyan
+                (255, 255, 150),  # Yellow
+            ]
+        )
         self.active = True
 
     def update(self, dt):
@@ -156,13 +161,13 @@ def draw_sparkle(draw, cx, cy, size, color, opacity):
     # Horizontal arm
     draw.ellipse(
         [cx - arm_length, cy - arm_width, cx + arm_length, cy + arm_width],
-        fill=color + (alpha,)
+        fill=color + (alpha,),
     )
 
     # Vertical arm
     draw.ellipse(
         [cx - arm_width, cy - arm_length, cx + arm_width, cy + arm_length],
-        fill=color + (alpha,)
+        fill=color + (alpha,),
     )
 
 
@@ -192,19 +197,17 @@ def draw_heart(draw, cx, cy, size, color, opacity):
     # Use ellipse approximation for heart
     # Left lobe
     draw.ellipse(
-        [cx - size * 0.6, cy - size * 0.4, cx, cy + size * 0.3],
-        fill=color + (alpha,)
+        [cx - size * 0.6, cy - size * 0.4, cx, cy + size * 0.3], fill=color + (alpha,)
     )
     # Right lobe
     draw.ellipse(
-        [cx, cy - size * 0.4, cx + size * 0.6, cy + size * 0.3],
-        fill=color + (alpha,)
+        [cx, cy - size * 0.4, cx + size * 0.6, cy + size * 0.3], fill=color + (alpha,)
     )
     # Bottom point (triangle approximation)
     points = [
         (cx - size * 0.5, cy + size * 0.1),
         (cx + size * 0.5, cy + size * 0.1),
-        (cx, cy + size * 0.8)
+        (cx, cy + size * 0.8),
     ]
     draw.polygon(points, fill=color + (alpha,))
 
@@ -216,7 +219,7 @@ def draw_glow(draw, cx, cy, size, color, opacity):
         glow_alpha = int(opacity * 30 / i)
         draw.ellipse(
             [cx - glow_size, cy - glow_size, cx + glow_size, cy + glow_size],
-            fill=color + (glow_alpha,)
+            fill=color + (glow_alpha,),
         )
 
 
@@ -224,7 +227,6 @@ def create_particle_frame(
     resolution: tuple,
     particles: list,
     sparkles: Optional[list] = None,
-    color: Optional[tuple] = None
 ) -> np.ndarray:
     """Create a single frame with particles and sparkles.
 
@@ -232,7 +234,6 @@ def create_particle_frame(
         resolution: (width, height) of the frame
         particles: List of Particle objects
         sparkles: List of Sparkle objects (optional)
-        color: Default color (unused, particles have their own colors)
 
     Returns:
         RGBA numpy array with particles on transparent background

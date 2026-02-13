@@ -1,18 +1,18 @@
 import os
-
+import logging
+from typing import Optional
 
 from moviepy.audio.io.AudioFileClip import AudioFileClip
-from moviepy.video.VideoClip import ImageClip, ColorClip, VideoClip
-from moviepy.video.VideoClip import TextClip
+from moviepy.video.VideoClip import ImageClip, VideoClip
 from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
-
-
-from typing import Optional
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont
 import textwrap
 import numpy as np
+
 from .background_generator import create_gradient_background, create_zoomed_background
 from .particle_generator import make_particle_clip
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _measure_text(draw_obj, s, fnt):
@@ -279,48 +279,6 @@ def render_text_image(
     return arr
 
 
-def create_video_from_audio_and_text(
-    audio_path: str,
-    title: str,
-    out_path: str,
-    duration: Optional[float] = None,
-    image_path: Optional[str] = None,
-    fps: int = 24,
-    resolution=(1280, 720),
-):
-    """Crea un video simple con una imagen de fondo (o color), el texto del título
-    y el audio como pista principal. Guarda el resultado en `out_path`.
-    """
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-
-    audio = AudioFileClip(audio_path)
-    if duration is None:
-        duration = audio.duration
-
-    if image_path and os.path.exists(image_path):
-        bg = ImageClip(image_path).with_duration(duration)
-        bg = bg.resize(newsize=resolution)
-    else:
-        # Imagen en color sólido (blanco)
-        bg = ColorClip(size=resolution, color=(255, 255, 255))
-
-    # Renderizamos el título como imagen y lo usamos como ImageClip
-    img_arr = render_text_image(
-        title,
-        resolution=resolution,
-        font_size=48,
-        color=(0, 0, 0),  # Black text
-        bg_color=None,
-        valign="bottom",
-        bottom_margin=150,
-    )
-    txt_clip = ImageClip(img_arr).with_duration(duration).with_position((0, 0))
-
-    video = CompositeVideoClip([bg, txt_clip]).with_duration(duration)
-    video = video.with_audio(audio)
-    video.write_videofile(out_path, fps=fps, codec="libx264", audio_codec="aac")
-
-
 def create_video_with_subtitles(
     audio_path: str,
     subtitles: list,
@@ -338,7 +296,6 @@ def create_video_with_subtitles(
     num_particles: int = 60,  # More particles for visual impact
     fade_duration: float = 0.5,
     tiktok_mode: bool = True,
-    text_animation: str = "fade",  # Options: fade, typewriter, bounce, scale
     zoom_background: bool = True,  # Add subtle zoom to background
     add_sparkles: bool = True,  # Add sparkle effects
 ):
@@ -361,15 +318,10 @@ def create_video_with_subtitles(
         num_particles: Number of particles in overlay
         fade_duration: Duration of fade in/out effects in seconds
         tiktok_mode: Enable TikTok optimizations (fonts, stroke, effects)
-        text_animation: Animation style for text (fade, typewriter, bounce, scale)
         zoom_background: Add subtle zoom/pan to background
         add_sparkles: Add sparkle/light effects
     """
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-
-    import logging
-
-    LOGGER = logging.getLogger(__name__)
 
     LOGGER.info(f"Loading audio for video from: {audio_path}")
     audio = AudioFileClip(audio_path)

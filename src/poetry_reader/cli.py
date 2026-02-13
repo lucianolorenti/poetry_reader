@@ -2,7 +2,6 @@ import typer
 from pathlib import Path
 from typing import Optional
 from .generate_videos import main as generate_main
-import os
 import logging
 
 # Configure logging to show INFO messages
@@ -258,7 +257,7 @@ def process_drive(
             typer.echo("Get the ID from your Google Drive file URL")
             raise typer.Exit(1)
 
-        typer.echo(f"[poetry-reader] Downloading Excel tracker...")
+        typer.echo("[poetry-reader] Downloading Excel tracker...")
         local_excel_path = Path(drive_cfg["local"]["cache_dir"]) / "tracker.xlsx"
         local_excel_path.parent.mkdir(parents=True, exist_ok=True)
 

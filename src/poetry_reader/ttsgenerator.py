@@ -135,30 +135,19 @@ class Qwen3TTSWrapper:
 
         LOGGER.info("Voice clone prompt created successfully from reference file")
 
-    def synthesize_to_file(
-        self,
-        text: str,
-        out_path: str,
-        instruct: Optional[str] = None,
-    ):
+    def synthesize_to_file(self, text: str, out_path: str):
         """Generate audio for a single text and save to file.
 
         Args:
             text: Text to synthesize
             out_path: Output audio file path
-            instruct: Voice instruction/description (ignored, uses reference voice)
         """
         self.synthesize_batch_to_files(
             texts=[text],
             out_paths=[out_path],
         )
 
-    def synthesize_batch_to_files(
-        self,
-        texts: List[str],
-        out_paths: List[str],
-        instruct: Optional[str] = None,
-    ):
+    def synthesize_batch_to_files(self, texts: List[str], out_paths: List[str]):
         """Generate audio for multiple texts with consistent voice using voice cloning.
 
         This method ensures all texts are synthesized with the exact same voice
@@ -167,7 +156,6 @@ class Qwen3TTSWrapper:
         Args:
             texts: List of texts to synthesize
             out_paths: List of output audio file paths (must match texts length)
-            instruct: Voice instruction/description (ignored, uses reference voice)
         """
         import soundfile as sf
 
@@ -299,8 +287,6 @@ def get_tts(
     backend: str = "qwen3",
     lang: Optional[str] = None,
     model_name: Optional[str] = None,
-    voice: Optional[str] = None,
-    instruct: Optional[str] = None,
     reference_wav_path: Optional[str] = None,
     device: str = "auto",
     model_size: str = "1.7B",
@@ -311,8 +297,6 @@ def get_tts(
         backend: TTS backend (only 'qwen3' is supported)
         lang: Language code (es, en)
         model_name: Specific Qwen3-TTS model name (should be Base model)
-        voice: Not used (kept for compatibility)
-        instruct: Not used (kept for compatibility, voice comes from reference)
         reference_wav_path: Path to reference WAV file (REQUIRED)
         device: Device to use ('auto', 'cpu', 'cuda', 'cuda:0', etc.)
         model_size: Model size - "1.7B" or "0.6B" (default: "1.7B")

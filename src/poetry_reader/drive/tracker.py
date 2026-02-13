@@ -30,7 +30,7 @@ class ExcelTracker:
     """
 
     REQUIRED_COLUMNS = ["Archivo", "Hecho"]
-    OPTIONAL_COLUMNS = ["video_drive_id", "fecha_procesado", "error"]
+    OPTIONAL_COLUMNS = ["video_drive_id", "video_url", "fecha_procesado", "error"]
 
     def __init__(self, excel_path: str):
         """

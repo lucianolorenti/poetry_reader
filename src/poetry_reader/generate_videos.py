@@ -1,17 +1,18 @@
 import os
 import logging
+import re
+import wave
 from glob import glob
-from tqdm import tqdm
 from typing import Optional
 import unicodedata
 
-
 from moviepy.audio.io.AudioFileClip import AudioFileClip
 from moviepy.audio.AudioClip import concatenate_audioclips
-from .ttsgenerator import get_tts
-
-
 from langdetect import detect
+
+from .ttsgenerator import get_tts
+from .video_generator import create_video_with_subtitles
+from .utils import parse_md_file
 
 LOGGER = logging.getLogger(__name__)
 
@@ -51,16 +52,11 @@ def normalize_text_for_tts(text: str) -> str:
     return "".join(result)
 
 
-from .video_generator import create_video_with_subtitles
-
-
 def sanitize_filename(s: str) -> str:
     return "".join(c for c in s if c.isalnum() or c in (" ", "-", "_")).rstrip()
 
 
 def split_text_into_sentences(text: str):
-    import re
-
     parts = re.split(r"(?<=[\.\?!])\s+", text.strip())
     return [p.strip() for p in parts if p.strip()]
 
@@ -78,91 +74,12 @@ def split_text_into_lines(text: str):
 
 def write_silence_wav(path: str, duration: float = 0.6, framerate: int = 22050):
     """Write a mono 16-bit silent WAV file of given duration (seconds)."""
-    import wave
-
     n_frames = int(duration * framerate)
     with wave.open(path, "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(framerate)
         wf.writeframes(b"\x00\x00" * n_frames)
-
-
-def parse_md_file(path: str):
-    """Parse a markdown file with the expected format:
-    First non-empty line: starts with 'Titulo:' or 'Título:' or 'Title:' -> title
-    Second non-empty line: starts with 'Autor:' or 'Author:' -> author
-    Remaining lines: poem content.
-
-    Returns (title, author, content_str).
-    """
-    with open(path, "r", encoding="utf-8") as f:
-        lines = [l.rstrip("\n\r") for l in f.readlines()]
-
-    stripped = [ln.strip() for ln in lines]
-    non_empty = [ln for ln in stripped if ln != ""]
-
-    title = None
-    author = None
-    content_lines = []
-
-    if len(non_empty) >= 1:
-        first = non_empty[0]
-        if ":" in first:
-            key, val = first.split(":", 1)
-            if key.strip().lower() in ("titulo", "título", "title"):
-                title = val.strip()
-
-    if len(non_empty) >= 2:
-        second = non_empty[1]
-        if ":" in second:
-            key, val = second.split(":", 1)
-            if key.strip().lower() in ("autor", "author"):
-                author = val.strip()
-
-    if title is None or author is None:
-        for ln in stripped[:4]:
-            if ln and ":" in ln:
-                key, val = ln.split(":", 1)
-                k = key.strip().lower()
-                if title is None and k in ("titulo", "título", "title"):
-                    title = val.strip()
-                if author is None and k in ("autor", "author"):
-                    author = val.strip()
-
-    start_idx = 0
-    header_count = 0
-    for i, ln in enumerate(lines):
-        if ln.strip() == "":
-            continue
-        if ":" in ln and header_count < 2:
-            header_count += 1
-            start_idx = i + 1
-            continue
-        if header_count >= 2:
-            start_idx = i
-            break
-    if header_count < 2:
-        count = 0
-        for i, ln in enumerate(lines):
-            if ln.strip() != "":
-                count += 1
-                if count >= 2:
-                    start_idx = i + 1
-                    break
-
-    content_lines = lines[start_idx:]
-    while content_lines and content_lines[0].strip() == "":
-        content_lines = content_lines[1:]
-
-    content = "\n".join(content_lines).strip()
-
-    if not title:
-        title = os.path.splitext(os.path.basename(path))[0]
-    if not author:
-        author = ""
-
-    return title, author, content
 
 
 def main(
@@ -395,5 +312,56 @@ if __name__ == "__main__":
     )
     parser.add_argument("--out", help="Directorio de salida", default="output")
     parser.add_argument("--image", help="Imagen de fondo para videos", default=None)
+    parser.add_argument(
+        "--gradient-palette", help="Paleta de colores del gradiente", default=None
+    )
+    parser.add_argument(
+        "--no-particles", action="store_true", help="Desactivar partículas"
+    )
+    parser.add_argument("--font-size", type=int, default=80, help="Tamaño de fuente")
+    parser.add_argument(
+        "--fade-duration", type=float, default=0.5, help="Duración del fade"
+    )
+    parser.add_argument("--force-lang", help="Forzar idioma (es/en)", default=None)
+    parser.add_argument("--fps", type=int, default=30, help="Frames por segundo")
+    parser.add_argument(
+        "--num-particles", type=int, default=80, help="Número de partículas"
+    )
+    parser.add_argument("--tts-model", help="Modelo TTS", default=None)
+    parser.add_argument(
+        "--tts-reference-wav", help="WAV de referencia para TTS", default=None
+    )
+    parser.add_argument("--device", default="auto", help="Device para TTS")
+    parser.add_argument(
+        "--tts-model-size", default="1.7B", help="Tamaño del modelo TTS"
+    )
+    parser.add_argument(
+        "--vertical", action="store_true", default=True, help="Formato vertical"
+    )
+    parser.add_argument(
+        "--no-zoom", action="store_true", help="Desactivar zoom de fondo"
+    )
     args = parser.parse_args()
-    main(args.input_dir, args.out, args.image)
+
+    resolution = (1080, 1920) if args.vertical else (1280, 720)
+
+    main(
+        input_dir=args.input_dir,
+        out_dir=args.out,
+        image_path=args.image,
+        gradient_palette=args.gradient_palette,
+        add_particles=not args.no_particles,
+        font_size=args.font_size,
+        fade_duration=args.fade_duration,
+        force_lang=args.force_lang,
+        fps=args.fps,
+        num_particles=args.num_particles,
+        tts_backend="qwen3",
+        tts_model=args.tts_model,
+        tts_reference_wav=args.tts_reference_wav,
+        device=args.device,
+        tts_model_size=args.tts_model_size,
+        resolution=resolution,
+        tiktok_mode=True,
+        zoom_background=not args.no_zoom,
+    )

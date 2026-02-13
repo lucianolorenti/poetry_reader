@@ -1,9 +1,8 @@
 """Generate beautiful gradient backgrounds for poetry videos with TikTok-style effects."""
 
 import numpy as np
-from PIL import Image, ImageFilter
+from PIL import Image
 import random
-import math
 from typing import Optional
 
 
@@ -58,18 +57,14 @@ def create_gradient_background(
     palette_name: Optional[str] = None,
     direction: str = "diagonal",
     noise: bool = True,
-    animated: bool = False,
-    time: float = 0.0,
 ) -> np.ndarray:
     """Create a smooth gradient background.
 
     Args:
         resolution: (width, height) of the image
         palette_name: Name of color palette from COLOR_PALETTES. If None, random.
-        direction: "vertical", "horizontal", "diagonal", "radial", "animated"
+        direction: "vertical", "horizontal", "diagonal", "radial"
         noise: Add subtle grain/texture overlay
-        animated: Create animated gradient (shifting colors over time)
-        time: Time value for animated gradients (0.0 to 1.0)
 
     Returns:
         numpy array (H, W, 3) uint8 RGB image
@@ -79,23 +74,17 @@ def create_gradient_background(
     if palette_name is None or palette_name not in COLOR_PALETTES:
         # Prefer TikTok palettes for better visual impact
         tiktok_palettes = [k for k in COLOR_PALETTES.keys() if k.startswith("tiktok_")]
-        palette_name = random.choice(tiktok_palettes if tiktok_palettes else list(COLOR_PALETTES.keys()))
+        palette_name = random.choice(
+            tiktok_palettes if tiktok_palettes else list(COLOR_PALETTES.keys())
+        )
 
     colors = COLOR_PALETTES[palette_name]
-
-    # For animated gradients, shift colors based on time
-    if animated:
-        colors = _shift_colors(colors, time)
 
     # Create gradient
     if direction == "vertical":
         gradient = _vertical_gradient(width, height, colors)
-    elif direction == "horizontal":
-        gradient = _horizontal_gradient(width, height, colors)
     elif direction == "radial":
         gradient = _radial_gradient(width, height, colors)
-    elif direction == "spiral":
-        gradient = _spiral_gradient(width, height, colors, time)
     else:  # diagonal
         gradient = _diagonal_gradient(width, height, colors)
 
@@ -104,19 +93,6 @@ def create_gradient_background(
         gradient = _add_noise(gradient, intensity=0.03)
 
     return gradient
-
-
-def _shift_colors(colors: list, time: float) -> list:
-    """Shift colors for animated effect."""
-    shifted = []
-    for i, color in enumerate(colors):
-        shift = math.sin(time * 2 * math.pi + i * 0.5) * 0.1
-        new_color = tuple(
-            max(0, min(255, int(c * (1 + shift))))
-            for c in color
-        )
-        shifted.append(new_color)
-    return shifted
 
 
 def _vertical_gradient(width: int, height: int, colors: list) -> np.ndarray:
@@ -137,28 +113,6 @@ def _vertical_gradient(width: int, height: int, colors: list) -> np.ndarray:
             color = c1 * (1 - frac) + c2 * frac
 
         img[y, :, :] = color
-
-    return img
-
-
-def _horizontal_gradient(width: int, height: int, colors: list) -> np.ndarray:
-    """Create horizontal gradient."""
-    img = np.zeros((height, width, 3), dtype=np.uint8)
-    num_colors = len(colors)
-
-    for x in range(width):
-        t = x / (width - 1) * (num_colors - 1)
-        idx = int(t)
-        frac = t - idx
-
-        if idx >= num_colors - 1:
-            color = colors[-1]
-        else:
-            c1 = np.array(colors[idx])
-            c2 = np.array(colors[idx + 1])
-            color = c1 * (1 - frac) + c2 * frac
-
-        img[:, x, :] = color
 
     return img
 
@@ -216,37 +170,6 @@ def _radial_gradient(width: int, height: int, colors: list) -> np.ndarray:
     return img
 
 
-def _spiral_gradient(width: int, height: int, colors: list, time: float = 0.0) -> np.ndarray:
-    """Create spiral gradient effect for TikTok videos."""
-    img = np.zeros((height, width, 3), dtype=np.uint8)
-    num_colors = len(colors)
-    cx, cy = width // 2, height // 2
-
-    for y in range(height):
-        for x in range(width):
-            dx = x - cx
-            dy = y - cy
-            dist = np.sqrt(dx**2 + dy**2)
-            angle = math.atan2(dy, dx) + time * 2 * math.pi
-
-            # Combine distance and angle for spiral effect
-            spiral = (dist / 100) + angle / (2 * math.pi)
-            t = (spiral % 1) * (num_colors - 1)
-            idx = int(t)
-            frac = t - idx
-
-            if idx >= num_colors - 1:
-                color = colors[-1]
-            else:
-                c1 = np.array(colors[idx])
-                c2 = np.array(colors[idx + 1])
-                color = c1 * (1 - frac) + c2 * frac
-
-            img[y, x, :] = color
-
-    return img
-
-
 def _add_noise(img: np.ndarray, intensity: float = 0.03) -> np.ndarray:
     """Add subtle grain texture."""
     noise = np.random.normal(0, intensity * 255, img.shape)
@@ -258,7 +181,9 @@ def _add_noise(img: np.ndarray, intensity: float = 0.03) -> np.ndarray:
 def get_random_palette() -> str:
     """Return a random palette name, preferring TikTok palettes."""
     tiktok_palettes = [k for k in COLOR_PALETTES.keys() if k.startswith("tiktok_")]
-    return random.choice(tiktok_palettes if tiktok_palettes else list(COLOR_PALETTES.keys()))
+    return random.choice(
+        tiktok_palettes if tiktok_palettes else list(COLOR_PALETTES.keys())
+    )
 
 
 def create_zoomed_background(

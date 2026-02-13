@@ -7,10 +7,8 @@ generating videos, uploading to Drive, and updating the tracker.
 
 import glob
 import logging
-import os
 import random
-import tempfile
-import traceback
+import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
@@ -19,6 +17,7 @@ from datetime import datetime
 from .drive.manager import DriveManager
 from .drive.tracker import ExcelTracker
 from .generate_videos import main as generate_video
+from .utils import parse_markdown_file
 
 # Configure logging to show INFO messages
 logging.basicConfig(
@@ -329,19 +328,19 @@ class VideoOrchestrator:
             print(f"  [DEBUG] Starting video generation for index {index}")
 
             # Generate video
-            print(f"  → Generating video...")
+            print("  → Generating video...")
             self._generate_video(md_file)
-            print(f"  [DEBUG] Video generation completed", flush=True)
+            print("  [DEBUG] Video generation completed", flush=True)
 
             # Find generated video file
             print(f"  [DEBUG] Looking for video file with title: {titulo}")
             video_file = self._find_generated_video(titulo)
             print(f"  [DEBUG] Found video file: {video_file}")
             if not video_file or not video_file.exists():
-                raise OrchestratorError(f"Video file not found after generation")
+                raise OrchestratorError("Video file not found after generation")
 
             print(f"  → Video generated: {video_file.name}")
-            print(f"  [DEBUG] About to start upload process")
+            print("  [DEBUG] About to start upload process")
 
             # Upload video to Drive
             videos_folder_id = self.drive_config.get("videos_output_folder_id")
@@ -350,7 +349,7 @@ class VideoOrchestrator:
                     "videos_output_folder_id not configured in drive config"
                 )
 
-            print(f"  → Uploading to Drive...")
+            print("  → Uploading to Drive...")
 
             # Check if file already exists and delete it to avoid multiple versions
             existing_file = self.drive_manager.find_file_by_name(
@@ -472,8 +471,6 @@ class VideoOrchestrator:
             temp_input_dir.mkdir(exist_ok=True)
 
             # Copy the markdown to temp input dir
-            import shutil
-
             temp_md_copy = temp_input_dir / markdown_file.name
             shutil.copy(markdown_file, temp_md_copy)
 
@@ -500,15 +497,15 @@ class VideoOrchestrator:
                     tiktok_mode=self.video_config.get("tiktok_mode", True),
                     zoom_background=self.video_config.get("zoom_background", True),
                 )
-                print(f"  [DEBUG] generate_video completed successfully")
+                print("  [DEBUG] generate_video completed successfully")
             except Exception as gen_error:
                 print(f"  [DEBUG] generate_video failed with error: {gen_error}")
                 raise
 
             # Cleanup temp input dir
-            print(f"  [DEBUG] Cleaning up temp directory")
+            print("  [DEBUG] Cleaning up temp directory")
             shutil.rmtree(temp_input_dir)
-            print(f"  [DEBUG] Cleanup completed")
+            print("  [DEBUG] Cleanup completed")
 
         except Exception as e:
             print(f"  [DEBUG] Exception in _generate_video: {e}")
@@ -547,14 +544,7 @@ class VideoOrchestrator:
         return max(mp4_files, key=lambda p: p.stat().st_mtime)
 
     def _parse_markdown_file(self, index: int, file_path: str) -> Dict[str, Any]:
-        """
-        Parse a markdown file and extract metadata and content.
-
-        Expected format:
-        Titulo: {titulo}
-        Autor: {autor}
-
-        {texto}
+        """Parse a markdown file and extract metadata and content.
 
         Args:
             index: DataFrame index
@@ -563,55 +553,9 @@ class VideoOrchestrator:
         Returns:
             Dict with keys: index, autor, titulo, texto, filepath
         """
-        content = Path(file_path).read_text(encoding="utf-8")
-
-        lines = content.split("\n")
-        titulo = ""
-        autor = ""
-        texto_start = 0
-
-        # Parse header lines
-        for i, line in enumerate(lines):
-            if line.startswith("Titulo:"):
-                titulo = line.replace("Titulo:", "").strip()
-            elif line.startswith("Autor:"):
-                autor = line.replace("Autor:", "").strip()
-            elif line.strip() == "" and titulo and autor:
-                # Empty line after both headers marks start of text
-                texto_start = i + 1
-                break
-
-        # Extract text content
-        texto = "\n".join(lines[texto_start:]).strip()
-
-        if not titulo:
-            # Use filename as fallback
-            titulo = Path(file_path).stem
-
-        if not autor:
-            autor = "Desconocido"
-
-        return {
-            "index": index,
-            "autor": autor,
-            "titulo": titulo,
-            "texto": texto,
-            "filepath": file_path,
-        }
-
-    def _cleanup_temp_files(self, files: List[Path]) -> None:
-        """
-        Remove temporary files.
-
-        Args:
-            files: List of file paths to remove
-        """
-        for filepath in files:
-            try:
-                if filepath.exists():
-                    filepath.unlink()
-            except Exception as e:
-                print(f"  [WARNING] Failed to cleanup {filepath}: {e}")
+        result = parse_markdown_file(file_path)
+        result["index"] = index
+        return result
 
     def _print_report(self, report: ProcessingReport) -> None:
         """

@@ -8,6 +8,9 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "google-api-python-client>=2.154.0",
+    "google-auth-httplib2>=0.2.0",
+    "google-auth-oauthlib>=1.2.1",
     "langdetect>=1.0.9",
     "moviepy>=2.2.1",
     "numba>=0.63.1",
