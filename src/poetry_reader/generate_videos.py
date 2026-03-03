@@ -72,6 +72,68 @@ def split_text_into_lines(text: str):
     return lines
 
 
+def group_lines_into_blocks(lines):
+    """Group poem lines into text and silence blocks.
+
+    - Consecutive non-empty lines -> one text block
+    - Each empty line -> one silence block (for a pause between stanzas)
+    """
+    blocks = []
+    current_lines = []
+
+    for line in lines:
+        if line.strip():
+            # Non-empty: accumulate in current text block
+            current_lines.append(line)
+        else:
+            # Empty line: close current text block (if any) and add a silence block
+            if current_lines:
+                blocks.append({"type": "text", "lines": current_lines})
+                current_lines = []
+            blocks.append({"type": "silence", "lines": [""]})
+
+    # Flush last pending text block
+    if current_lines:
+        blocks.append({"type": "text", "lines": current_lines})
+
+    return blocks
+
+
+def allocate_durations_for_lines(lines, total_duration):
+    """Allocate total_duration across lines proportionally to their length.
+
+    This is a heuristic for per-verse timing inside a TTS block.
+    """
+    n = len(lines)
+    if n == 0 or total_duration <= 0:
+        return [0.0] * n
+
+    # Use character length (after strip) as weight; fall back to 1 to avoid zeros
+    weights = [len(line.strip()) or 1 for line in lines]
+    total_weight = sum(weights)
+
+    if total_weight <= 0:
+        # Equal distribution if everything is empty / weird
+        base = total_duration / n
+        durations = [base] * n
+        # Adjust last one to absorb rounding error
+        durations[-1] = max(0.0, total_duration - sum(durations[:-1]))
+        return durations
+
+    durations = []
+    acc = 0.0
+    for i, w in enumerate(weights):
+        if i == n - 1:
+            # Last line: absorb any rounding error
+            dur = max(0.0, total_duration - acc)
+        else:
+            dur = total_duration * (w / total_weight)
+            acc += dur
+        durations.append(dur)
+
+    return durations
+
+
 def write_silence_wav(path: str, duration: float = 0.6, framerate: int = 22050):
     """Write a mono 16-bit silent WAV file of given duration (seconds)."""
     n_frames = int(duration * framerate)
@@ -158,32 +220,37 @@ def main(
         print(tts_key)
         tts = tts_cache[tts_key]
 
+        # Split into raw lines and group into blocks
         lines = split_text_into_lines(text)
+        blocks = group_lines_into_blocks(lines)
+
         fragments = []
         subtitles = []
         start_time = 0.0
 
-        # Prepare batch synthesis: collect all non-empty lines and their paths
+        # Prepare batch synthesis: collect all text blocks and their paths
         texts_to_synthesize = []
         paths_to_synthesize = []
-        line_indices = []  # Keep track of which lines are text (not silence)
+        block_tts_index = {}  # block_idx -> index into texts_to_synthesize
 
-        for j, line in enumerate(lines):
-            frag_path = os.path.join(audio_frag_dir, f"frag_{j + 1}.wav")
-            if line.strip() == "":
-                # Mark as silence (will be handled separately)
-                line_indices.append((j, None, frag_path))
-            else:
-                texts_to_synthesize.append(line)
+        for block_idx, block in enumerate(blocks):
+            frag_path = os.path.join(audio_frag_dir, f"block_{block_idx + 1}.wav")
+            if block["type"] == "text":
+                # Join lines so TTS sees the whole stanza/phrase
+                block_text = "\n".join(block["lines"]).strip()
+                texts_to_synthesize.append(block_text)
                 paths_to_synthesize.append(frag_path)
-                line_indices.append((j, len(texts_to_synthesize) - 1, frag_path))
+                block_tts_index[block_idx] = len(texts_to_synthesize) - 1
+            else:
+                # Silence block, no TTS needed
+                block_tts_index[block_idx] = None
 
-        # Generate all audios in a single batch for consistent voice
+        # Generate all text-block audios in a single batch for consistent voice
         if texts_to_synthesize:
             LOGGER.info(
-                f"Synthesizing {len(texts_to_synthesize)} text segments in batch..."
+                f"Synthesizing {len(texts_to_synthesize)} text blocks in batch..."
             )
-            LOGGER.info(f"Text segments: {texts_to_synthesize}")
+            LOGGER.info(f"Text blocks: {texts_to_synthesize}")
             LOGGER.info(f"Output paths: {paths_to_synthesize}")
             tts.synthesize_batch_to_files(
                 texts=texts_to_synthesize,
@@ -197,46 +264,64 @@ def main(
                 else:
                     LOGGER.error(f"Missing file: {path}")
 
-        # Process all segments in order (silences and synthesized texts)
-        LOGGER.info(f"Processing {len(line_indices)} segments...")
-        for j, text_idx, frag_path in line_indices:
-            line = lines[j]
-            LOGGER.info(
-                f"Processing segment {j}: text_idx={text_idx}, path={frag_path}"
-            )
+        # Process all blocks in order (silences and synthesized text blocks)
+        LOGGER.info(f"Processing {len(blocks)} blocks...")
+        for block_idx, block in enumerate(blocks):
+            frag_path = os.path.join(audio_frag_dir, f"block_{block_idx + 1}.wav")
 
-            if line.strip() == "":
-                # Silence segment
+            if block["type"] == "silence":
+                # Silence block: fixed pause
                 write_silence_wav(frag_path, duration=0.5)
                 clip = AudioFileClip(frag_path)
                 dur = clip.duration
-                LOGGER.info(f"Silence {j}: duration={dur:.2f}s")
-                # Use subclip to ensure moviepy respects the exact duration
+                LOGGER.info(f"Silence block {block_idx}: duration={dur:.2f}s")
                 clip = clip.subclipped(0, dur)
                 fragments.append(clip)
                 subtitles.append({"text": "", "start": start_time, "duration": dur})
                 start_time += dur
-            else:
-                # Text segment (already synthesized)
-                if not os.path.exists(frag_path):
-                    LOGGER.error(f"Audio file missing: {frag_path}")
+                continue
+
+            # Text block
+            tts_idx = block_tts_index.get(block_idx)
+            if tts_idx is None:
+                LOGGER.error(f"No TTS index for text block {block_idx}")
+                continue
+
+            if not os.path.exists(frag_path):
+                LOGGER.error(f"Audio file missing for block {block_idx}: {frag_path}")
+                continue
+
+            file_size = os.path.getsize(frag_path)
+            LOGGER.info(
+                f"Text block {block_idx}: loading {frag_path} ({file_size} bytes)"
+            )
+            clip = AudioFileClip(frag_path)
+            LOGGER.info(
+                f"Text block {block_idx}: loaded, duration={clip.duration:.2f}s, fps={clip.fps}"
+            )
+
+            dur = clip.duration
+            LOGGER.info(
+                f"Text block {block_idx}: final duration={dur:.2f}s, lines={len(block['lines'])}"
+            )
+
+            clip = clip.subclipped(0, dur)
+            fragments.append(clip)
+
+            # Advanced coordination: distribute block duration across its lines (verses)
+            line_durations = allocate_durations_for_lines(block["lines"], dur)
+
+            line_start = start_time
+            for line, line_dur in zip(block["lines"], line_durations):
+                if line_dur <= 0:
                     continue
-                file_size = os.path.getsize(frag_path)
-                LOGGER.info(f"Text {j}: loading {frag_path} ({file_size} bytes)")
-                clip = AudioFileClip(frag_path)
-                LOGGER.info(
-                    f"Text {j}: loaded, duration={clip.duration:.2f}s, fps={clip.fps}"
+                subtitles.append(
+                    {"text": line, "start": line_start, "duration": line_dur}
                 )
-                # Keep full audio - do not trim
-                dur = clip.duration
-                LOGGER.info(
-                    f"Text {j}: final duration={dur:.2f}s, line='{line[:30]}...'"
-                )
-                # Use subclip to ensure moviepy respects the exact duration
-                clip = clip.subclipped(0, dur)
-                fragments.append(clip)
-                subtitles.append({"text": line, "start": start_time, "duration": dur})
-                start_time += dur
+                line_start += line_dur
+
+            # Advance global time by the whole block duration
+            start_time += dur
 
         if fragments:
             total_duration = sum(c.duration for c in fragments)
