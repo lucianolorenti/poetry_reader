@@ -3,7 +3,7 @@ import logging
 import re
 import wave
 from glob import glob
-from typing import Optional
+from typing import Optional, Callable
 import unicodedata
 
 from moviepy.audio.io.AudioFileClip import AudioFileClip
@@ -163,6 +163,7 @@ def main(
     resolution: tuple = (1080, 1920),
     tiktok_mode: bool = True,
     zoom_background: bool = True,
+    upload_callback=None,
 ):
     """Main video generation pipeline reading `.md` files from `input_dir`.
 
@@ -174,6 +175,10 @@ def main(
     Autor: Ada
 
     Then the poem content from the next line onward.
+
+    Args:
+        upload_callback: Optional callback function called after each video is generated.
+                        Receives dict with: video_path, title, author, text, base_name
     """
     os.makedirs(out_dir, exist_ok=True)
 
@@ -375,6 +380,21 @@ def main(
                 zoom_background=zoom_background,
                 add_sparkles=True,
             )
+
+            # Llamar al callback de upload si está configurado
+            if upload_callback:
+                try:
+                    upload_callback(
+                        {
+                            "video_path": video_path,
+                            "title": title,
+                            "author": author,
+                            "text": text,
+                            "base_name": base_name,
+                        }
+                    )
+                except Exception as e:
+                    LOGGER.error(f"Error en upload callback: {e}")
 
             try:
                 for f in os.listdir(audio_frag_dir):
