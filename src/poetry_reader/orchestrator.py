@@ -326,7 +326,7 @@ class VideoOrchestrator:
         markdown_data: Dict[str, Any],
         upload_to_drive: bool = True,
         upload_to_youtube: bool = False,
-        youtube_privacy: str = "private",
+        youtube_privacy: str = "public",
     ) -> ProcessingResult:
         """
         Process a single markdown into video.

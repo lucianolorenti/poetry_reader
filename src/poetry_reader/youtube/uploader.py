@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any, Callable
 from googleapiclient.errors import HttpError
@@ -138,8 +139,34 @@ class YouTubeUploader:
             },
             "status": {
                 "privacyStatus": privacy_status,
+                # Explicitly mark as not made for kids
+                "selfDeclaredMadeForKids": False,
             },
         }
+
+        # If the requested privacy is public, schedule the video for a random
+        # time between 1 and 7 days from now. This keeps behaviour unchanged
+        # for private/unlisted uploads.
+        if privacy_status == "public":
+            now = datetime.utcnow()
+            min_delay = timedelta(days=1)
+            max_delay = timedelta(days=7)
+            min_seconds = int(min_delay.total_seconds())
+            max_seconds = int(max_delay.total_seconds())
+            # Random delay in [min_seconds, max_seconds]
+            if max_seconds > min_seconds:
+                # Use os.urandom for a simple random int without importing random
+                random_byte = os.urandom(1)[0]
+                delay_seconds = min_seconds + int(
+                    (max_seconds - min_seconds) * random_byte / 255
+                )
+            else:
+                delay_seconds = min_seconds
+
+            publish_time = now + timedelta(seconds=delay_seconds)
+            body["status"]["publishAt"] = publish_time.replace(microsecond=0).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
 
         if tags:
             body["snippet"]["tags"] = tags

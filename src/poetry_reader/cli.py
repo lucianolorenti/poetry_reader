@@ -269,9 +269,9 @@ def process_drive(
         help="Also upload videos to YouTube with poem metadata",
     ),
     youtube_privacy: str = typer.Option(
-        "private",
+        "public",
         "--youtube-privacy",
-        help="YouTube video privacy: private, unlisted, or public",
+        help="YouTube video privacy: private, unlisted, or public (default: public)",
     ),
 ):
     """
