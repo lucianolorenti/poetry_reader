@@ -147,15 +147,19 @@ class Qwen3TTSWrapper:
             out_paths=[out_path],
         )
 
-    def synthesize_batch_to_files(self, texts: List[str], out_paths: List[str]):
+    def synthesize_batch_to_files(
+        self, texts: List[str], out_paths: List[str], batch_size: int = 5
+    ):
         """Generate audio for multiple texts with consistent voice using voice cloning.
 
         This method ensures all texts are synthesized with the exact same voice
         by using a cached voice clone prompt from the reference audio.
+        Processes texts in batches to avoid CUDA out of memory errors.
 
         Args:
             texts: List of texts to synthesize
             out_paths: List of output audio file paths (must match texts length)
+            batch_size: Number of texts to process per batch (default: 5)
         """
         import soundfile as sf
 
@@ -180,27 +184,49 @@ class Qwen3TTSWrapper:
             if dir_path:
                 os.makedirs(dir_path, exist_ok=True)
 
+        total_texts = len(texts)
+        LOGGER.info(
+            f"Generating {total_texts} audio(s) with voice cloning (batch_size={batch_size})..."
+        )
+
         try:
-            LOGGER.info(f"Generating {len(texts)} audio(s) with voice cloning...")
+            # Process in batches to avoid CUDA OOM
+            for batch_start in range(0, total_texts, batch_size):
+                batch_end = min(batch_start + batch_size, total_texts)
+                batch_texts = texts[batch_start:batch_end]
+                batch_paths = out_paths[batch_start:batch_end]
+                batch_num = batch_start // batch_size + 1
+                total_batches = (total_texts + batch_size - 1) // batch_size
 
-            # Use voice clone with cached prompt for consistent voice
-            wavs, sr = self.model.generate_voice_clone(
-                text=texts,
-                language=[self.qwen_lang] * len(texts),
-                voice_clone_prompt=self._voice_clone_prompt,
-            )
-
-            # Save each audio to its respective file
-            for i, out_path in enumerate(out_paths):
-                audio_data = wavs[i]
                 LOGGER.info(
-                    f"Audio {i + 1}/{len(texts)}: shape={audio_data.shape}, "
-                    f"duration={len(audio_data) / sr:.2f}s, sr={sr}"
+                    f"Processing batch {batch_num}/{total_batches} ({len(batch_texts)} texts)..."
                 )
-                sf.write(out_path, audio_data, sr)
-                LOGGER.info(f"Audio {i + 1}/{len(texts)} saved to {out_path}")
 
-            LOGGER.info(f"Successfully generated {len(texts)} audio file(s)")
+                # Use voice clone with cached prompt for consistent voice
+                wavs, sr = self.model.generate_voice_clone(
+                    text=batch_texts,
+                    language=[self.qwen_lang] * len(batch_texts),
+                    voice_clone_prompt=self._voice_clone_prompt,
+                )
+
+                # Save each audio to its respective file
+                for i, out_path in enumerate(batch_paths):
+                    audio_data = wavs[i]
+                    global_idx = batch_start + i
+                    LOGGER.info(
+                        f"Audio {global_idx + 1}/{total_texts}: shape={audio_data.shape}, "
+                        f"duration={len(audio_data) / sr:.2f}s, sr={sr}"
+                    )
+                    sf.write(out_path, audio_data, sr)
+                    LOGGER.info(
+                        f"Audio {global_idx + 1}/{total_texts} saved to {out_path}"
+                    )
+
+                # Clear CUDA cache after each batch to free memory
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+            LOGGER.info(f"Successfully generated {total_texts} audio file(s)")
 
         except Exception as exc:
             LOGGER.exception("Failed to synthesize with Qwen3-TTS: %s", exc)

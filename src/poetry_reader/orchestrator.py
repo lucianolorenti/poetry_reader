@@ -108,8 +108,16 @@ class VideoOrchestrator:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.temp_md_dir.mkdir(parents=True, exist_ok=True)
 
+        # YouTube uploader (initialized on demand)
+        self._youtube_uploader = None
+
     def process_all(
-        self, limit: Optional[int] = None, dry_run: bool = False
+        self,
+        limit: Optional[int] = None,
+        dry_run: bool = False,
+        upload_to_drive: bool = True,
+        upload_to_youtube: bool = False,
+        youtube_privacy: str = "private",
     ) -> ProcessingReport:
         """
         Process all pending markdowns.
@@ -117,6 +125,9 @@ class VideoOrchestrator:
         Args:
             limit: Maximum number of videos to process (None = all)
             dry_run: If True, simulate without actually processing
+            upload_to_drive: If True, upload videos to Google Drive
+            upload_to_youtube: If True, also upload videos to YouTube
+            youtube_privacy: YouTube video privacy setting
 
         Returns:
             ProcessingReport with statistics and results
@@ -243,7 +254,12 @@ class VideoOrchestrator:
                 continue
 
             # Process the markdown
-            result = self.process_single_markdown(markdown_data)
+            result = self.process_single_markdown(
+                markdown_data,
+                upload_to_drive=upload_to_drive,
+                upload_to_youtube=upload_to_youtube,
+                youtube_privacy=youtube_privacy,
+            )
             results.append(result)
 
             if result.status == "success":
@@ -306,13 +322,20 @@ class VideoOrchestrator:
         return report
 
     def process_single_markdown(
-        self, markdown_data: Dict[str, Any]
+        self,
+        markdown_data: Dict[str, Any],
+        upload_to_drive: bool = True,
+        upload_to_youtube: bool = False,
+        youtube_privacy: str = "private",
     ) -> ProcessingResult:
         """
         Process a single markdown into video.
 
         Args:
             markdown_data: Dict with keys: index, autor, titulo, texto, filepath
+            upload_to_drive: Whether to upload to Google Drive
+            upload_to_youtube: Whether to also upload to YouTube
+            youtube_privacy: YouTube video privacy setting
 
         Returns:
             ProcessingResult with outcome
@@ -340,45 +363,73 @@ class VideoOrchestrator:
                 raise OrchestratorError("Video file not found after generation")
 
             print(f"  → Video generated: {video_file.name}")
-            print("  [DEBUG] About to start upload process")
 
-            # Upload video to Drive
-            videos_folder_id = self.drive_config.get("videos_output_folder_id")
-            if not videos_folder_id:
-                raise OrchestratorError(
-                    "videos_output_folder_id not configured in drive config"
+            video_id = None
+            video_url = None
+
+            if upload_to_drive:
+                print("  [DEBUG] About to start upload process")
+
+                # Upload video to Drive
+                videos_folder_id = self.drive_config.get("videos_output_folder_id")
+                if not videos_folder_id:
+                    raise OrchestratorError(
+                        "videos_output_folder_id not configured in drive config"
+                    )
+
+                print("  → Uploading to Drive...")
+
+                # Check if file already exists and delete it to avoid multiple versions
+                existing_file = self.drive_manager.find_file_by_name(
+                    videos_folder_id, video_file.name
                 )
+                if existing_file:
+                    print(f"  → Replacing existing file: {video_file.name}")
+                    self.drive_manager.delete_file(existing_file.id)
 
-            print("  → Uploading to Drive...")
-
-            # Check if file already exists and delete it to avoid multiple versions
-            existing_file = self.drive_manager.find_file_by_name(
-                videos_folder_id, video_file.name
-            )
-            if existing_file:
-                print(f"  → Replacing existing file: {video_file.name}")
-                self.drive_manager.delete_file(existing_file.id)
-
-            print(f"  → Uploading {video_file.name} to folder {videos_folder_id}...")
-            try:
-                video_id = self.drive_manager.upload_file(
-                    str(video_file), videos_folder_id, video_file.name
+                print(
+                    f"  → Uploading {video_file.name} to folder {videos_folder_id}..."
                 )
-                print(f"  → Video uploaded with ID: {video_id}")
-            except Exception as upload_error:
-                print(f"  ✗ Upload failed: {upload_error}")
-                raise OrchestratorError(f"Failed to upload video: {upload_error}")
+                try:
+                    video_id = self.drive_manager.upload_file(
+                        str(video_file), videos_folder_id, video_file.name
+                    )
+                    print(f"  → Video uploaded with ID: {video_id}")
+                except Exception as upload_error:
+                    print(f"  ✗ Upload failed: {upload_error}")
+                    raise OrchestratorError(f"Failed to upload video: {upload_error}")
 
-            # Get shareable link for reporting (not saved to Excel)
-            try:
-                video_url = self.drive_manager.get_shareable_link(video_id)
-                print(f"  → Shareable link: {video_url}")
-            except Exception as link_error:
-                print(f"  [WARNING] Could not get shareable link: {link_error}")
-                video_url = f"https://drive.google.com/file/d/{video_id}"
+                # Get shareable link for reporting (not saved to Excel)
+                try:
+                    video_url = self.drive_manager.get_shareable_link(video_id)
+                    print(f"  → Shareable link: {video_url}")
+                except Exception as link_error:
+                    print(f"  [WARNING] Could not get shareable link: {link_error}")
+                    video_url = f"https://drive.google.com/file/d/{video_id}"
 
-            # Mark as processed in tracker
-            self.tracker.mark_processed(index, video_id)
+                # Mark as processed in tracker
+                self.tracker.mark_processed(index, video_id)
+            else:
+                print("  [INFO] Upload disabled - video saved locally only")
+                # Mark as processed without video_id
+                self.tracker.mark_processed(index, "LOCAL_ONLY")
+
+            # Upload to YouTube if enabled
+            if upload_to_youtube:
+                try:
+                    print("  → Uploading to YouTube...")
+                    youtube_video_id = self._upload_to_youtube(
+                        str(video_file),
+                        titulo,
+                        autor,
+                        markdown_data.get("texto", ""),
+                        youtube_privacy,
+                    )
+                    print(f"  → YouTube video ID: {youtube_video_id}")
+                    print(f"  → YouTube URL: https://youtu.be/{youtube_video_id}")
+                except Exception as yt_error:
+                    print(f"  [WARNING] YouTube upload failed: {yt_error}")
+                    # Don't fail the whole process if YouTube upload fails
 
             # Cleanup - no need to delete downloaded files, they stay in temp_md_dir
 
@@ -556,6 +607,52 @@ class VideoOrchestrator:
         result = parse_markdown_file(file_path)
         result["index"] = index
         return result
+
+    def _get_or_create_youtube_uploader(self):
+        """Get or create YouTube uploader instance."""
+        if self._youtube_uploader is None:
+            from .youtube import YouTubeUploader
+
+            self._youtube_uploader = YouTubeUploader()
+        return self._youtube_uploader
+
+    def _upload_to_youtube(
+        self,
+        video_path: str,
+        titulo: str,
+        autor: str,
+        texto: str,
+        privacy: str = "private",
+    ) -> str:
+        """
+        Upload video to YouTube with poem metadata.
+
+        Args:
+            video_path: Path to video file
+            titulo: Poem title
+            autor: Poem author
+            texto: Poem text
+            privacy: YouTube privacy setting
+
+        Returns:
+            YouTube video ID
+        """
+        uploader = self._get_or_create_youtube_uploader()
+
+        # Construir título y descripción
+        youtube_title = f"{titulo} - {autor}"
+        youtube_description = f"{titulo}\n{autor}\n\n{texto}"
+
+        response = uploader.upload_video(
+            video_path=video_path,
+            title=youtube_title,
+            description=youtube_description,
+            privacy_status=privacy,
+            category_id="27",  # Education
+            tags=["poetry", "poem", "spoken word", "literature"],
+        )
+
+        return response.get("id")
 
     def _print_report(self, report: ProcessingReport) -> None:
         """

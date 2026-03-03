@@ -66,9 +66,84 @@ def generate(
     no_zoom: bool = typer.Option(
         False, "--no-zoom", help="Desactivar efecto de zoom en el fondo"
     ),
+    upload: bool = typer.Option(
+        False, "--upload", help="Subir videos a Google Drive después de generarlos"
+    ),
+    drive_config: Path = typer.Option(
+        Path("config/drive_config.yaml"),
+        "--drive-config",
+        help="Path a la configuración de Google Drive (requerido si --upload está activo)",
+    ),
 ):
     """Genera audios y videos desde archivos markdown, optimizado para TikTok"""
     resolution = (1080, 1920) if vertical else (1280, 720)
+
+    # Configurar callback de upload si está activado
+    upload_callback = None
+    if upload:
+        if not drive_config.exists():
+            typer.echo(f"Error: Drive config not found: {drive_config}", err=True)
+            typer.echo(
+                "Create it with: cp config/drive_config.yaml.example config/drive_config.yaml"
+            )
+            raise typer.Exit(1)
+
+        import yaml
+        from .drive import authenticate, DriveManager
+
+        typer.echo("[poetry-reader] Loading Drive configuration for upload...")
+        with open(drive_config) as f:
+            drive_cfg = yaml.safe_load(f)
+
+        typer.echo("[poetry-reader] Authenticating with Google Drive...")
+        drive = authenticate(
+            credentials_path=drive_cfg["google_drive"]["credentials_file"],
+            client_secrets_path=drive_cfg["google_drive"]["client_secrets"],
+            settings_file=drive_cfg["google_drive"].get("settings_file"),
+        )
+
+        drive_manager = DriveManager(
+            drive,
+            max_retries=drive_cfg["processing"]["max_retries"],
+            retry_delay=drive_cfg["processing"]["retry_delay_seconds"],
+        )
+
+        videos_folder_id = drive_cfg["drive"]["videos_output_folder_id"]
+        if videos_folder_id == "YOUR_VIDEOS_FOLDER_ID_HERE":
+            typer.echo(
+                "\nError: Please configure videos_output_folder_id in drive_config.yaml",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        def upload_video_callback(video_info: dict):
+            """Callback para subir video a Drive después de generarlo."""
+            video_path = video_info["video_path"]
+            title = video_info["title"]
+
+            typer.echo(f"  → Uploading to Drive: {title}")
+
+            # Verificar si ya existe y eliminarlo
+            from pathlib import Path
+
+            video_file = Path(video_path)
+            existing_file = drive_manager.find_file_by_name(
+                videos_folder_id, video_file.name
+            )
+            if existing_file:
+                typer.echo(f"  → Replacing existing file: {video_file.name}")
+                drive_manager.delete_file(existing_file.id)
+
+            # Subir el video
+            video_id = drive_manager.upload_file(
+                str(video_file), videos_folder_id, video_file.name
+            )
+            typer.echo(
+                f"  ✓ Video uploaded: https://drive.google.com/file/d/{video_id}"
+            )
+
+        upload_callback = upload_video_callback
+        typer.echo("[poetry-reader] Upload to Drive enabled\n")
 
     generate_main(
         input_dir=str(input_dir),
@@ -89,6 +164,7 @@ def generate(
         resolution=resolution,
         tiktok_mode=True,
         zoom_background=not no_zoom,
+        upload_callback=upload_callback,
     )
 
 
@@ -184,6 +260,19 @@ def process_drive(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Simulate execution without processing"
     ),
+    no_upload: bool = typer.Option(
+        False, "--no-upload", help="Skip uploading videos to Google Drive"
+    ),
+    upload_youtube: bool = typer.Option(
+        False,
+        "--upload-youtube",
+        help="Also upload videos to YouTube with poem metadata",
+    ),
+    youtube_privacy: str = typer.Option(
+        "private",
+        "--youtube-privacy",
+        help="YouTube video privacy: private, unlisted, or public",
+    ),
 ):
     """
     Process markdowns from Google Drive according to Excel tracker.
@@ -193,18 +282,23 @@ def process_drive(
     2. Downloads Excel tracker
     3. Identifies pending markdowns (where Hecho=False)
     4. Generates videos for each pending markdown
-    5. Uploads videos to Google Drive
-    6. Updates Excel tracker with results
-    7. Uploads updated tracker back to Drive
+    5. Uploads videos to Google Drive (unless --no-upload)
+    6. Optionally uploads to YouTube with poem metadata (--upload-youtube)
+    7. Updates Excel tracker with results
+    8. Uploads updated tracker back to Drive
 
     Requirements:
     - client_secrets.json in ./credentials/ (from Google Cloud Console)
+    - For YouTube: credentials/youtube_client_secrets.json
     - Configured IDs in drive_config.yaml
     - Excel tracker with columns: Autor, Titulo, Texto, Hecho
 
     Example:
         poetry-reader process-drive
         poetry-reader process-drive --limit 5 --dry-run
+        poetry-reader process-drive --no-upload  # Generate videos but don't upload
+        poetry-reader process-drive --upload-youtube  # Also upload to YouTube
+        poetry-reader process-drive --upload-youtube --youtube-privacy unlisted
     """
     import yaml
     from .drive import authenticate, DriveManager, ExcelTracker
@@ -268,9 +362,385 @@ def process_drive(
 
         orchestrator = VideoOrchestrator(drive_manager, tracker, config)
 
-        report = orchestrator.process_all(limit=limit, dry_run=dry_run)
+        upload_to_drive = not no_upload
+        if not upload_to_drive:
+            typer.echo(
+                "[poetry-reader] Upload to Drive disabled (videos will be generated locally only)"
+            )
+
+        if upload_youtube:
+            typer.echo(
+                "[poetry-reader] YouTube upload enabled with privacy: "
+                + youtube_privacy
+            )
+            # Validar privacidad
+            if youtube_privacy not in ["private", "unlisted", "public"]:
+                typer.echo(
+                    "Error: --youtube-privacy must be 'private', 'unlisted', or 'public'",
+                    err=True,
+                )
+                raise typer.Exit(1)
+
+        report = orchestrator.process_all(
+            limit=limit,
+            dry_run=dry_run,
+            upload_to_drive=upload_to_drive,
+            upload_to_youtube=upload_youtube,
+            youtube_privacy=youtube_privacy,
+        )
+
+        report = orchestrator.process_all(
+            limit=limit, dry_run=dry_run, upload_to_drive=upload_to_drive
+        )
 
         if report.failed > 0:
+            raise typer.Exit(1)
+
+    except KeyboardInterrupt:
+        typer.echo("\n[poetry-reader] Interrupted by user")
+        raise typer.Exit(130)
+    except Exception as e:
+        typer.echo(f"\n[poetry-reader] Error: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@app.command()
+def upload(
+    video_source: str = typer.Argument(
+        ...,
+        help="Path al video local o Google Drive file ID (ej: ./output/video.mp4 o 1ABC123...)",
+    ),
+    markdown: Optional[Path] = typer.Option(
+        None,
+        "--markdown",
+        "-m",
+        help="Path al archivo markdown con el poema (para extraer título, autor y texto)",
+    ),
+    title: Optional[str] = typer.Option(
+        None,
+        "--title",
+        "-t",
+        help="Título del video (default: extraído del archivo markdown o del nombre del archivo)",
+    ),
+    description: Optional[str] = typer.Option(
+        None,
+        "--description",
+        "-d",
+        help="Descripción del video (default: extraída del archivo markdown)",
+    ),
+    tags: Optional[str] = typer.Option(
+        None, "--tags", help="Tags separados por coma (ej: 'poetry,poem,spoken word')"
+    ),
+    privacy: str = typer.Option(
+        "private", "--privacy", "-p", help="Privacidad: private, unlisted, o public"
+    ),
+    category: str = typer.Option(
+        "27",
+        "--category",
+        "-c",
+        help="ID de categoría de YouTube (default: 27 - Education)",
+    ),
+    is_drive_id: bool = typer.Option(
+        False,
+        "--from-drive",
+        help="Interpretar video_source como Google Drive file ID en lugar de path local",
+    ),
+    drive_config: Path = typer.Option(
+        Path("config/drive_config.yaml"),
+        "--drive-config",
+        help="Path a la configuración de Google Drive (necesario si --from-drive)",
+    ),
+):
+    """
+    Sube un video a YouTube.
+
+    El video puede venir de un path local o de Google Drive (especificando --from-drive).
+
+    Si proporcionas un archivo markdown (--markdown), se extraerá automáticamente:
+    - Título: "Titulo del poema - Autor"
+    - Descripción: "Titulo del poema, Autor\n\n[texto del poema]"
+
+    Examples:
+        # Subir video local con metadata del poema
+        poetry-reader upload ./output/video.mp4 --markdown ./input/poema.md
+
+        # Subir desde Google Drive
+        poetry-reader upload 1ABC123xyz --from-drive --markdown ./poema.md
+
+        # Con opciones personalizadas
+        poetry-reader upload ./video.mp4 --markdown ./poema.md --tags "poetry,art" --privacy unlisted
+    """
+    import tempfile
+    import os
+    from .youtube import YouTubeUploader
+
+    temp_download_path = None
+    video_path = None
+
+    try:
+        # Determinar el path del video (local o descargar de Drive)
+        if is_drive_id:
+            # Descargar de Google Drive
+            import yaml
+            from .drive import authenticate as drive_auth, DriveManager
+
+            if not drive_config.exists():
+                typer.echo(f"Error: Drive config not found: {drive_config}", err=True)
+                raise typer.Exit(1)
+
+            with open(drive_config) as f:
+                drive_cfg = yaml.safe_load(f)
+
+            typer.echo("[poetry-reader] Authenticating with Google Drive...")
+            drive = drive_auth(
+                credentials_path=drive_cfg["google_drive"]["credentials_file"],
+                client_secrets_path=drive_cfg["google_drive"]["client_secrets"],
+                settings_file=drive_cfg["google_drive"].get("settings_file"),
+            )
+
+            drive_manager = DriveManager(
+                drive,
+                max_retries=drive_cfg["processing"]["max_retries"],
+                retry_delay=drive_cfg["processing"]["retry_delay_seconds"],
+            )
+
+            # Crear archivo temporal para descargar
+            temp_dir = tempfile.mkdtemp()
+            temp_download_path = os.path.join(temp_dir, "video_to_upload.mp4")
+
+            typer.echo(
+                f"[poetry-reader] Downloading video from Drive (ID: {video_source})..."
+            )
+            success = drive_manager.download_file(video_source, temp_download_path)
+            if not success:
+                typer.echo("✗ Failed to download video from Drive", err=True)
+                raise typer.Exit(1)
+
+            video_path = temp_download_path
+            typer.echo(f"✓ Video downloaded to: {video_path}")
+        else:
+            # Usar path local
+            video_path_obj = Path(video_source)
+            if not video_path_obj.exists():
+                typer.echo(f"Error: Video file not found: {video_source}", err=True)
+                raise typer.Exit(1)
+            video_path = str(video_path_obj)
+
+        # Configurar metadatos
+        video_path_obj = Path(video_path)
+
+        # Extraer información del markdown si está disponible
+        poem_data = None
+        if markdown:
+            if markdown.exists():
+                from .utils import parse_markdown_file
+
+                try:
+                    poem_data = parse_markdown_file(str(markdown))
+                    typer.echo(
+                        f"[poetry-reader] Loaded poem: '{poem_data['titulo']}' by {poem_data['autor']}"
+                    )
+                except Exception as e:
+                    typer.echo(f"[WARNING] Failed to parse markdown: {e}", err=True)
+            else:
+                typer.echo(f"[WARNING] Markdown file not found: {markdown}", err=True)
+
+        # Construir título y descripción
+        if poem_data:
+            # Usar información del poema
+            actual_title = title or f"{poem_data['titulo']} - {poem_data['autor']}"
+            if description:
+                actual_description = description
+            else:
+                # Descripción con título, autor y texto del poema
+                actual_description = f"{poem_data['titulo']}\n{poem_data['autor']}\n\n{poem_data['texto']}"
+        else:
+            # Usar valores por defecto o los proporcionados
+            actual_title = (
+                title or video_path_obj.stem.replace("_", " ").replace("-", " ").title()
+            )
+            actual_description = (
+                description or f"Uploaded via poetry-reader from {video_path_obj.name}"
+            )
+
+        tag_list = tags.split(",") if tags else []
+
+        # Validar privacidad
+        if privacy not in ["private", "unlisted", "public"]:
+            typer.echo(
+                f"Error: Privacy must be 'private', 'unlisted', or 'public'", err=True
+            )
+            raise typer.Exit(1)
+
+        # Subir a YouTube
+        typer.echo("[poetry-reader] Initializing YouTube uploader...")
+        uploader = YouTubeUploader()
+
+        typer.echo(f"[poetry-reader] Uploading to YouTube: {actual_title}")
+        typer.echo(f"  Privacy: {privacy}")
+        if tag_list:
+            typer.echo(f"  Tags: {', '.join(tag_list)}")
+
+        response = uploader.upload_video(
+            video_path=video_path,
+            title=actual_title,
+            description=actual_description,
+            tags=tag_list,
+            privacy_status=privacy,
+            category_id=category,
+        )
+
+        video_id = response.get("id")
+        typer.echo(f"\n✓ Upload complete!")
+        typer.echo(f"  Video ID: {video_id}")
+        typer.echo(f"  URL: https://youtu.be/{video_id}")
+
+    except Exception as e:
+        typer.echo(f"\n[poetry-reader] Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    finally:
+        # Limpiar archivo temporal si se descargó de Drive
+        if temp_download_path and os.path.exists(temp_download_path):
+            try:
+                os.remove(temp_download_path)
+                os.rmdir(os.path.dirname(temp_download_path))
+                typer.echo("[poetry-reader] Cleaned up temporary file")
+            except Exception:
+                pass
+
+
+@app.command("upload-md")
+def upload_md(
+    source_dir: Path = typer.Argument(..., help="Directorio con archivos .md a subir"),
+    folder_id: Optional[str] = typer.Option(
+        None,
+        "--folder-id",
+        help="ID de la carpeta de destino en Google Drive (si no se especifica, usa markdowns_folder_id del config)",
+    ),
+    drive_config: Path = typer.Option(
+        Path("config/drive_config.yaml"),
+        "--drive-config",
+        help="Path a la configuración de Google Drive",
+    ),
+    pattern: str = typer.Option(
+        "*.md",
+        "--pattern",
+        help="Patrón de archivos a subir (default: *.md)",
+    ),
+    replace: bool = typer.Option(
+        False,
+        "--replace",
+        help="Reemplazar archivos existentes en Drive",
+    ),
+):
+    """
+    Sube archivos .md desde una carpeta local a Google Drive.
+
+    Este comando sube todos los archivos markdown desde el directorio especificado
+    a una carpeta de destino en Google Drive.
+
+    Examples:
+        # Subir todos los .md usando la carpeta configurada en drive_config.yaml
+        poetry-reader upload-md ./poemas
+
+        # Subir a una carpeta específica (sobrescribe la configuración)
+        poetry-reader upload-md ./poemas --folder-id 1ABC123xyz
+
+        # Subir y reemplazar archivos existentes
+        poetry-reader upload-md ./poemas --replace
+    """
+    import yaml
+    from .drive import authenticate, DriveManager
+
+    if not drive_config.exists():
+        typer.echo(f"Error: Drive config not found: {drive_config}", err=True)
+        typer.echo(
+            "Create it with: cp config/drive_config.yaml.example config/drive_config.yaml"
+        )
+        raise typer.Exit(1)
+
+    if not source_dir.exists():
+        typer.echo(f"Error: Source directory not found: {source_dir}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo("[poetry-reader] Loading Drive configuration...")
+    with open(drive_config) as f:
+        drive_cfg = yaml.safe_load(f)
+
+    # Obtener folder_id del config si no se proporcionó
+    if folder_id is None:
+        folder_id = drive_cfg.get("drive", {}).get("markdowns_folder_id")
+        if folder_id is None or folder_id == "YOUR_MARKDOWNS_FOLDER_ID_HERE":
+            typer.echo(
+                "\nError: markdowns_folder_id not configured in drive_config.yaml",
+                err=True,
+            )
+            typer.echo("Please configure it or use --folder-id option", err=True)
+            raise typer.Exit(1)
+
+    try:
+        typer.echo("[poetry-reader] Authenticating with Google Drive...")
+        drive = authenticate(
+            credentials_path=drive_cfg["google_drive"]["credentials_file"],
+            client_secrets_path=drive_cfg["google_drive"]["client_secrets"],
+            settings_file=drive_cfg["google_drive"].get("settings_file"),
+        )
+
+        drive_manager = DriveManager(
+            drive,
+            max_retries=drive_cfg["processing"]["max_retries"],
+            retry_delay=drive_cfg["processing"]["retry_delay_seconds"],
+        )
+
+        # Buscar archivos .md
+        md_files = list(source_dir.glob(pattern))
+        if not md_files:
+            typer.echo(f"[poetry-reader] No files found matching pattern: {pattern}")
+            raise typer.Exit(0)
+
+        typer.echo(f"[poetry-reader] Found {len(md_files)} files to upload")
+        typer.echo(f"[poetry-reader] Destination folder: {folder_id}")
+        typer.echo()
+
+        uploaded = 0
+        replaced = 0
+        failed = 0
+
+        for md_file in md_files:
+            try:
+                typer.echo(f"  → Uploading: {md_file.name}")
+
+                # Verificar si ya existe
+                existing = drive_manager.find_file_by_name(folder_id, md_file.name)
+
+                if existing and replace:
+                    typer.echo(f"    → Replacing existing file: {md_file.name}")
+                    drive_manager.delete_file(existing.id)
+                elif existing:
+                    typer.echo(f"    ⚠ Skipping (already exists): {md_file.name}")
+                    continue
+
+                # Subir archivo
+                file_id = drive_manager.upload_file(
+                    str(md_file), folder_id, md_file.name
+                )
+                typer.echo(f"    ✓ Uploaded: https://drive.google.com/file/d/{file_id}")
+                uploaded += 1
+
+            except Exception as e:
+                typer.echo(f"    ✗ Failed: {md_file.name} - {e}", err=True)
+                failed += 1
+
+        typer.echo()
+        typer.echo(f"[poetry-reader] Upload complete!")
+        typer.echo(f"  ✓ Uploaded: {uploaded}")
+        if replaced > 0:
+            typer.echo(f"  ↻ Replaced: {replaced}")
+        if failed > 0:
+            typer.echo(f"  ✗ Failed: {failed}")
+
+        if failed > 0:
             raise typer.Exit(1)
 
     except KeyboardInterrupt:
