@@ -381,16 +381,19 @@ def process_drive(
                 )
                 raise typer.Exit(1)
 
+            # Primero subir videos procesados pero no subidos
+            orchestrator.upload_processed_not_uploaded_to_youtube(
+                limit=limit,
+                dry_run=dry_run,
+                youtube_privacy=youtube_privacy,
+            )
+
         report = orchestrator.process_all(
             limit=limit,
             dry_run=dry_run,
             upload_to_drive=upload_to_drive,
             upload_to_youtube=upload_youtube,
             youtube_privacy=youtube_privacy,
-        )
-
-        report = orchestrator.process_all(
-            limit=limit, dry_run=dry_run, upload_to_drive=upload_to_drive
         )
 
         if report.failed > 0:
@@ -552,8 +555,8 @@ def upload(
             if description:
                 actual_description = description
             else:
-                # Descripción con título, autor y texto del poema
-                actual_description = f"{poem_data['titulo']}\n{poem_data['autor']}\n\n{poem_data['texto']}"
+                # Descripción solo con el texto del poema
+                actual_description = poem_data["texto"]
         else:
             # Usar valores por defecto o los proporcionados
             actual_title = (

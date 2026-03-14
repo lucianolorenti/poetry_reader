@@ -24,6 +24,7 @@ class Qwen3TTSWrapper:
     LANG_MAP = {
         "es": "Spanish",
         "en": "English",
+        "it": "Italian",
     }
 
     def __init__(

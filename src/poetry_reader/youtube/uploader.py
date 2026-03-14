@@ -8,7 +8,7 @@ import os
 import sys
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any, Callable
 from googleapiclient.errors import HttpError
@@ -145,10 +145,11 @@ class YouTubeUploader:
         }
 
         # If the requested privacy is public, schedule the video for a random
-        # time between 1 and 7 days from now. This keeps behaviour unchanged
-        # for private/unlisted uploads.
+        # time between 1 and 7 days from now. YouTube requires privacyStatus
+        # to be "private" when using publishAt, and will make it public at
+        # the scheduled time.
         if privacy_status == "public":
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             min_delay = timedelta(days=1)
             max_delay = timedelta(days=7)
             min_seconds = int(min_delay.total_seconds())
@@ -164,9 +165,12 @@ class YouTubeUploader:
                 delay_seconds = min_seconds
 
             publish_time = now + timedelta(seconds=delay_seconds)
+            # Format in RFC 3339 UTC format with Z suffix
             body["status"]["publishAt"] = publish_time.replace(microsecond=0).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"
             )
+            # YouTube requires privacyStatus to be "private" when scheduling
+            body["status"]["privacyStatus"] = "private"
 
         if tags:
             body["snippet"]["tags"] = tags

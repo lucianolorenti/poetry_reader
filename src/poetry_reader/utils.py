@@ -76,22 +76,48 @@ def parse_md_file(path: str) -> Tuple[str, str, str]:
         first = non_empty[0]
         if ":" in first:
             key, val = first.split(":", 1)
-            if key.strip().lower() in ("titulo", "título", "title"):
+            key_normalized = (
+                key.strip()
+                .lower()
+                .replace("á", "a")
+                .replace("é", "e")
+                .replace("í", "i")
+                .replace("ó", "o")
+                .replace("ú", "u")
+            )
+            if key_normalized in ("titulo", "title"):
                 title = val.strip()
 
     if len(non_empty) >= 2:
         second = non_empty[1]
         if ":" in second:
             key, val = second.split(":", 1)
-            if key.strip().lower() in ("autor", "author"):
+            key_normalized = (
+                key.strip()
+                .lower()
+                .replace("á", "a")
+                .replace("é", "e")
+                .replace("í", "i")
+                .replace("ó", "o")
+                .replace("ú", "u")
+            )
+            if key_normalized in ("autor", "author"):
                 author = val.strip()
 
     if title is None or author is None:
         for ln in stripped[:4]:
             if ln and ":" in ln:
                 key, val = ln.split(":", 1)
-                k = key.strip().lower()
-                if title is None and k in ("titulo", "título", "title"):
+                k = (
+                    key.strip()
+                    .lower()
+                    .replace("á", "a")
+                    .replace("é", "e")
+                    .replace("í", "i")
+                    .replace("ó", "o")
+                    .replace("ú", "u")
+                )
+                if title is None and k in ("titulo", "title"):
                     title = val.strip()
                 if author is None and k in ("autor", "author"):
                     author = val.strip()

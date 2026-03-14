@@ -29,8 +29,15 @@ class ExcelTracker:
     - Hecho: Boolean or "Sí"/"No" - whether processed
     """
 
-    REQUIRED_COLUMNS = ["Archivo", "Hecho"]
-    OPTIONAL_COLUMNS = ["video_drive_id", "video_url", "fecha_procesado", "error"]
+    REQUIRED_COLUMNS = [
+        "Archivo",
+        "Hecho",
+        "video_drive_id",
+        "video_url",
+        "fecha_procesado",
+        "error",
+        "uploaded",
+    ]
 
     def __init__(self, excel_path: str):
         """
@@ -69,14 +76,13 @@ class ExcelTracker:
                     f"Found: {list(self.df.columns)}"
                 )
 
-            # Add optional columns if they don't exist
-            for col in self.OPTIONAL_COLUMNS:
-                if col not in self.df.columns:
-                    # Use object dtype for string columns to avoid float conversion issues
-                    if col == "video_drive_id":
-                        self.df[col] = pd.Series(dtype="object")
-                    else:
-                        self.df[col] = None
+            # Print found columns for debugging
+            print(f"[poetry-reader] Excel columns found: {list(self.df.columns)}")
+
+            # Ensure video_drive_id is always object dtype (not float64)
+            # This prevents errors when assigning string IDs
+            if "video_drive_id" in self.df.columns:
+                self.df["video_drive_id"] = self.df["video_drive_id"].astype("object")
 
             # Ensure video_drive_id is always object dtype (not float64)
             # This prevents errors when assigning string IDs
@@ -85,6 +91,9 @@ class ExcelTracker:
 
             # Normalize 'Hecho' column to boolean
             self._normalize_hecho_column()
+
+            # Normalize 'uploaded' column to boolean
+            self._normalize_uploaded_column()
 
             print(
                 f"[poetry-reader] ✓ Excel loaded: {len(self.df)} rows, "
@@ -135,6 +144,45 @@ class ExcelTracker:
 
         self.df["Hecho"] = self.df["Hecho"].apply(to_bool)
 
+    def _normalize_uploaded_column(self) -> None:
+        """
+        Normalize 'uploaded' column to boolean values.
+
+        Handles various input formats similar to Hecho column.
+        """
+        if self.df is None:
+            return
+
+        # Find uploaded column (case-insensitive)
+        uploaded_col = None
+        for col in self.df.columns:
+            if col.lower() == "uploaded":
+                uploaded_col = col
+                break
+
+        if uploaded_col is None:
+            print("[poetry-reader] Warning: No 'uploaded' column found")
+            return
+
+        # Rename if needed
+        if uploaded_col != "uploaded":
+            print(f"[poetry-reader] Renaming column '{uploaded_col}' to 'uploaded'")
+            self.df = self.df.rename(columns={uploaded_col: "uploaded"})
+
+        def to_bool(value):
+            if pd.isna(value):
+                return False
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return bool(value)
+            if isinstance(value, str):
+                value_lower = value.strip().lower()
+                return value_lower in ("sí", "si", "yes", "true", "1", "uploaded")
+            return False
+
+        self.df["uploaded"] = self.df["uploaded"].apply(to_bool)
+
     def get_pending_files(self) -> List[Dict[str, Any]]:
         """
         Get list of markdown files that haven't been processed yet.
@@ -177,6 +225,50 @@ class ExcelTracker:
         processed_df = self.df[self.df["Hecho"] == True]
         return set(processed_df["Archivo"].tolist())
 
+    def get_processed_not_uploaded(self) -> List[Dict[str, Any]]:
+        """
+        Get list of markdown files that are processed but not uploaded to YouTube.
+
+        Returns:
+            List of dicts with keys: index, filename, video_drive_id, video_url
+        """
+        if self.df is None:
+            raise TrackerError("Excel not loaded. Call load() first.")
+
+        # Filter: Hecho = True AND uploaded = False
+        mask = (self.df["Hecho"] == True) & (self.df["uploaded"] == False)
+        pending_upload_df = self.df[mask].copy()
+
+        result = []
+        for idx, row in pending_upload_df.iterrows():
+            result.append(
+                {
+                    "index": idx,
+                    "filename": row["Archivo"],
+                    "video_drive_id": row.get("video_drive_id"),
+                    "video_url": row.get("video_url"),
+                }
+            )
+
+        return result
+
+    def mark_uploaded(self, index: int) -> None:
+        """
+        Mark a video as successfully uploaded (tracks upload status).
+
+        Args:
+            index: DataFrame index of the row
+        """
+        if self.df is None:
+            raise TrackerError("Excel not loaded. Call load() first.")
+
+        if index not in self.df.index:
+            raise TrackerError(f"Invalid index: {index}")
+
+        self.df.at[index, "uploaded"] = True
+
+        print(f"[poetry-reader] ✓ Marked as uploaded: {self.df.at[index, 'Archivo']}")
+
     def add_new_file(self, filename: str) -> int:
         """
         Add a new file to the tracker.
@@ -190,23 +282,23 @@ class ExcelTracker:
         if self.df is None:
             raise TrackerError("Excel not loaded. Call load() first.")
 
-        # Create new row DataFrame to preserve dtypes
-        new_row_df = pd.DataFrame(
-            [
-                {
-                    "Archivo": filename,
-                    "Hecho": False,
-                    "video_drive_id": None,
-                    "fecha_procesado": None,
-                    "error": None,
-                }
-            ]
-        )
+        # Create new row DataFrame with only existing columns
+        new_row_data = {
+            "Archivo": filename,
+            "Hecho": False,
+            "video_drive_id": None,
+            "video_url": None,
+            "fecha_procesado": None,
+            "error": None,
+            "uploaded": False,
+        }
+
+        new_row_df = pd.DataFrame([new_row_data])
 
         # Concatenate preserving dtypes
         self.df = pd.concat([self.df, new_row_df], ignore_index=True)
 
-        # Ensure video_drive_id remains object dtype
+        # Ensure object dtypes for string columns
         self.df["video_drive_id"] = self.df["video_drive_id"].astype("object")
 
         new_idx = len(self.df) - 1
@@ -335,6 +427,7 @@ class ExcelTracker:
         self.df.at[index, "video_url"] = None
         self.df.at[index, "fecha_procesado"] = None
         self.df.at[index, "error"] = None
+        self.df.at[index, "uploaded"] = False
 
         print(f"[poetry-reader] ✓ Reset row: {self.df.at[index, 'Archivo']}")
 

@@ -427,6 +427,10 @@ class VideoOrchestrator:
                     )
                     print(f"  → YouTube video ID: {youtube_video_id}")
                     print(f"  → YouTube URL: https://youtu.be/{youtube_video_id}")
+
+                    # Mark as uploaded in tracker
+                    self.tracker.mark_uploaded(index)
+                    print(f"  ✓ Marked as uploaded in tracker")
                 except Exception as yt_error:
                     print(f"  [WARNING] YouTube upload failed: {yt_error}")
                     # Don't fail the whole process if YouTube upload fails
@@ -641,7 +645,7 @@ class VideoOrchestrator:
 
         # Construir título y descripción
         youtube_title = f"{titulo} - {autor}"
-        youtube_description = f"{titulo}\n{autor}\n\n{texto}"
+        youtube_description = texto
 
         response = uploader.upload_video(
             video_path=video_path,
@@ -653,6 +657,176 @@ class VideoOrchestrator:
         )
 
         return response.get("id")
+
+    def upload_processed_not_uploaded_to_youtube(
+        self,
+        limit: Optional[int] = None,
+        dry_run: bool = False,
+        youtube_privacy: str = "private",
+    ) -> List[Dict[str, Any]]:
+        """
+        Upload videos that are processed but not yet uploaded to YouTube.
+
+        This method finds videos in the tracker that have Hecho=True but uploaded=False,
+        downloads them from Drive, and uploads them to YouTube.
+
+        Args:
+            limit: Maximum number of videos to upload (None = all)
+            dry_run: If True, simulate without actually uploading
+            youtube_privacy: YouTube video privacy setting
+
+        Returns:
+            List of upload results with video info
+        """
+        print("\n" + "=" * 60)
+        print("CHECKING FOR VIDEOS TO UPLOAD TO YOUTUBE")
+        print("=" * 60 + "\n")
+
+        # Get processed but not uploaded files
+        files_to_upload = self.tracker.get_processed_not_uploaded()
+        print(f"[poetry-reader] Found {len(files_to_upload)} videos to upload")
+
+        if not files_to_upload:
+            print("[poetry-reader] No videos pending upload to YouTube")
+            return []
+
+        # Apply limit if specified
+        if limit is not None and limit < len(files_to_upload):
+            files_to_upload = files_to_upload[:limit]
+            print(f"[poetry-reader] Limited to {limit} videos")
+
+        results = []
+
+        for i, file_info in enumerate(files_to_upload, 1):
+            index = file_info["index"]
+            filename = file_info["filename"]
+            video_drive_id = file_info.get("video_drive_id")
+
+            print(f"\n[{i}/{len(files_to_upload)}] Uploading: {filename}")
+
+            if dry_run:
+                print("  [DRY RUN] Skipping actual upload")
+                results.append(
+                    {
+                        "filename": filename,
+                        "status": "skipped",
+                        "youtube_id": None,
+                    }
+                )
+                continue
+
+            try:
+                # Download video from Drive
+                if not video_drive_id:
+                    print(f"  [WARNING] No video_drive_id for {filename}, skipping")
+                    results.append(
+                        {
+                            "filename": filename,
+                            "status": "failed",
+                            "error": "No video_drive_id",
+                        }
+                    )
+                    continue
+
+                print(f"  → Downloading from Drive...")
+                video_path = self.cache_dir / f"temp_{filename}.mp4"
+                self.drive_manager.download_file(video_drive_id, str(video_path))
+                print(f"  → Downloaded to: {video_path}")
+
+                # Get markdown data for metadata
+                markdown_path = self.temp_md_dir / filename
+                if not markdown_path.exists():
+                    # Need to download the markdown from Drive
+                    print(f"  → Downloading markdown from Drive...")
+                    markdowns_folder_id = self.drive_config.get("markdowns_folder_id")
+                    files = self.drive_manager.list_files_in_folder(
+                        markdowns_folder_id, file_extension=".md"
+                    )
+                    for f in files:
+                        if f.title == filename:
+                            self.drive_manager.download_file(f.id, str(markdown_path))
+                            break
+
+                # Parse markdown for metadata
+                if markdown_path.exists():
+                    markdown_data = self._parse_markdown_file(index, str(markdown_path))
+                    titulo = markdown_data["titulo"]
+                    autor = markdown_data["autor"]
+                    texto = markdown_data.get("texto", "")
+                else:
+                    # Fallback to filename
+                    titulo = filename.replace(".md", "")
+                    autor = "Unknown"
+                    texto = ""
+
+                # Upload to YouTube
+                print(f"  → Uploading to YouTube...")
+                youtube_video_id = self._upload_to_youtube(
+                    str(video_path),
+                    titulo,
+                    autor,
+                    texto,
+                    youtube_privacy,
+                )
+                print(f"  → YouTube video ID: {youtube_video_id}")
+                print(f"  → YouTube URL: https://youtu.be/{youtube_video_id}")
+
+                # Mark as uploaded in tracker
+                self.tracker.mark_uploaded(index)
+
+                # Cleanup downloaded video
+                if video_path.exists():
+                    video_path.unlink()
+
+                results.append(
+                    {
+                        "filename": filename,
+                        "status": "success",
+                        "youtube_id": youtube_video_id,
+                    }
+                )
+
+                print(f"  ✓ Successfully uploaded!")
+
+            except Exception as e:
+                error_msg = str(e)
+                print(f"  ✗ Failed to upload: {error_msg}")
+                results.append(
+                    {
+                        "filename": filename,
+                        "status": "failed",
+                        "error": error_msg,
+                    }
+                )
+
+        # Save tracker
+        try:
+            self.tracker.save()
+            print("\n[poetry-reader] ✓ Tracker saved")
+
+            # Upload tracker to Drive
+            excel_file_id = self.drive_config.get("excel_tracker_id")
+            if excel_file_id:
+                self.drive_manager.update_file(excel_file_id, self.tracker.excel_path)
+                print("[poetry-reader] ✓ Tracker uploaded to Drive")
+        except Exception as e:
+            print(f"[WARNING] Failed to save tracker: {e}")
+
+        # Print summary
+        successful = sum(1 for r in results if r["status"] == "success")
+        failed = sum(1 for r in results if r["status"] == "failed")
+        skipped = sum(1 for r in results if r["status"] == "skipped")
+
+        print("\n" + "=" * 60)
+        print("YOUTUBE UPLOAD SUMMARY")
+        print("=" * 60)
+        print(f"Total:      {len(results)}")
+        print(f"Successful: {successful}")
+        print(f"Failed:     {failed}")
+        print(f"Skipped:    {skipped}")
+        print("=" * 60)
+
+        return results
 
     def _print_report(self, report: ProcessingReport) -> None:
         """
